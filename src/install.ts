@@ -28,6 +28,7 @@ export interface InstallOptions {
   auditLogPath?: string;
   policyPath?: string;
   targets?: InstallTarget[];
+  excludeServers?: string[];
   strictVerify?: boolean;
   verifyTimeoutMs?: number;
   dryRun?: boolean;
@@ -61,6 +62,10 @@ export async function installMcpKingdom(options: InstallOptions = {}): Promise<I
   const targets = options.targets ?? await detectInstallTargets(homeDir);
   const changedFiles: string[] = [];
   const backups: string[] = [];
+  const excludedServers = new Set<string>([
+    ...FRONT_DOOR_SERVER_NAMES,
+    ...(options.excludeServers ?? getExcludedServersFromEnv()),
+  ]);
 
   const migratedState = await migrateLegacyState({ homeDir, dryRun: options.dryRun });
   changedFiles.push(...migratedState.changedFiles);
@@ -70,15 +75,15 @@ export async function installMcpKingdom(options: InstallOptions = {}): Promise<I
     throw new Error('No supported targets detected. Pass --targets claude,codex,opencode to create config files explicitly.');
   }
 
-  const mergedSnapshot = await snapshotMergedConfig({ cwd, homeDir, excludeServers: [...FRONT_DOOR_SERVER_NAMES] });
-  const existingBackend = await readExistingBackendSnapshot(backendPath);
+  const mergedSnapshot = await snapshotMergedConfig({ cwd, homeDir, excludeServers: [...excludedServers] });
+  const existingBackend = await readExistingBackendSnapshot(backendPath, excludedServers);
   const finalSnapshot = {
     mcpServers: {
       ...existingBackend,
       ...mergedSnapshot.mcpServers,
     },
   };
-  for (const serverName of FRONT_DOOR_SERVER_NAMES) {
+  for (const serverName of excludedServers) {
     delete finalSnapshot.mcpServers[serverName];
   }
 
@@ -187,7 +192,7 @@ export async function detectInstallTargets(homeDir: string): Promise<InstallTarg
   return targets;
 }
 
-async function readExistingBackendSnapshot(backendPath: string): Promise<Record<string, unknown>> {
+async function readExistingBackendSnapshot(backendPath: string, excludedServers?: Set<string>): Promise<Record<string, unknown>> {
   const candidates = backendPath === DEFAULT_BACKEND_SNAPSHOT
     ? [DEFAULT_BACKEND_SNAPSHOT, LEGACY_BACKEND_SNAPSHOT]
     : [backendPath];
@@ -197,7 +202,16 @@ async function readExistingBackendSnapshot(backendPath: string): Promise<Record<
       continue;
     }
     const existing = await readJsonFile<{ mcpServers?: Record<string, unknown> }>(candidate);
-    return existing.mcpServers ?? {};
+    if (!existing.mcpServers) {
+      return {};
+    }
+    if (!excludedServers || excludedServers.size === 0) {
+      return existing.mcpServers;
+    }
+    return Object.fromEntries(
+      Object.entries(existing.mcpServers)
+        .filter(([serverName]) => !excludedServers.has(serverName)),
+    );
   }
   return {};
 }
@@ -246,10 +260,11 @@ async function installClaude({
     const permissions = current.permissions && typeof current.permissions === 'object' && !Array.isArray(current.permissions)
       ? { ...current.permissions as Record<string, unknown> }
       : {};
+    const managedAllowlist = new Set(getClaudeAllowlist(policy));
     const allow = Array.isArray(permissions.allow)
-      ? [...permissions.allow as unknown[]].filter((entry) => !isFrontDoorAllowlistEntry(entry))
+      ? [...permissions.allow as unknown[]].filter((entry) => !isManagedClaudeMcpPermission(entry, managedAllowlist))
       : [];
-    for (const toolName of getClaudeAllowlist(policy)) {
+    for (const toolName of managedAllowlist) {
       if (!allow.includes(toolName)) {
         allow.push(toolName);
       }
@@ -464,7 +479,7 @@ function sanitizeOpenCodePermission(permission: unknown): unknown {
   return Object.fromEntries(
     Object.entries(permission as Record<string, unknown>)
       .filter(([key]) => !key.startsWith('mcp__'))
-      .filter(([key]) => !isFrontDoorOpenCodePattern(key)),
+      .filter(([key]) => !looksLikeManagedOpenCodeMcpPattern(key)),
   );
 }
 
@@ -665,6 +680,20 @@ function isFrontDoorOpenCodePattern(entry: string): boolean {
   ].includes(entry);
 }
 
+function isManagedClaudeMcpPermission(entry: unknown, allowlist: Set<string>): boolean {
+  if (typeof entry !== 'string') {
+    return false;
+  }
+  return entry.startsWith('mcp__') && !allowlist.has(entry);
+}
+
+function looksLikeManagedOpenCodeMcpPattern(entry: string): boolean {
+  if (isFrontDoorOpenCodePattern(entry)) {
+    return true;
+  }
+  return /^[A-Za-z0-9 _-]+_\*$/.test(entry);
+}
+
 async function copyPath(from: string, to: string): Promise<void> {
   const stats = await fs.stat(from);
   if (stats.isDirectory()) {
@@ -677,4 +706,15 @@ async function copyPath(from: string, to: string): Promise<void> {
 
   await ensureDir(path.dirname(to));
   await fs.copyFile(from, to);
+}
+
+function getExcludedServersFromEnv(): string[] {
+  const value = process.env.MCP_KINGDOM_EXCLUDE_SERVERS ?? process.env.MCP_GRAPH_EXCLUDE_SERVERS;
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
 }

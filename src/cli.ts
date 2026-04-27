@@ -122,6 +122,7 @@ async function handleInstall(args: string[]): Promise<void> {
   const auditLogPath = readFlag(args, '--audit-log');
   const policyPath = readFlag(args, '--policy');
   const verifyTimeoutMs = readFlag(args, '--verify-timeout-ms');
+  const excludeServers = parseStringList(readFlag(args, '--exclude-servers'));
   const dryRun = hasFlag(args, '--dry-run');
   const strictVerify = hasFlag(args, '--strict-verify');
   const targets = parseTargets(readFlag(args, '--targets'));
@@ -129,6 +130,7 @@ async function handleInstall(args: string[]): Promise<void> {
     backendPath,
     auditLogPath,
     policyPath,
+    excludeServers,
     dryRun,
     strictVerify,
     targets,
@@ -180,8 +182,18 @@ function parseTargets(value?: string): InstallTarget[] | undefined {
     .filter((entry): entry is InstallTarget => entry === 'claude' || entry === 'codex' || entry === 'opencode');
 }
 
+function parseStringList(value?: string): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 function printHelp(): void {
-  process.stdout.write(`mcp-kingdom\n\nCommands:\n  serve               Run the MCP server over stdio (default)\n  snapshot            Merge discovered MCP configs and write a backend snapshot file\n  inspect             Print the merged server inventory and duplicate resolution\n  install             Snapshot backend MCPs, generate policy, and rewire Claude/Codex/OpenCode to use only mcp-kingdom\n  auth login          Bootstrap OAuth tokens for an auth-gated backend server\n\nExamples:\n  node dist/cli.js snapshot --output ~/.mcp-kingdom/backends.json\n  node dist/cli.js inspect --tool-counts\n  node dist/cli.js inspect --backend ~/.mcp-kingdom/backends.json --tool-counts\n  node dist/cli.js install\n  node dist/cli.js install --targets claude,codex,opencode --strict-verify\n  node dist/cli.js install --policy ~/.mcp-kingdom/policy.json --verify-timeout-ms ${DEFAULT_VERIFY_TIMEOUT_MS}\n  node dist/cli.js auth login --server slack\n  MCP_KINGDOM_CONFIG_PATH=~/.mcp-kingdom/backends.json node dist/cli.js\n`);
+  process.stdout.write(`mcp-kingdom\n\nCommands:\n  serve               Run the MCP server over stdio (default)\n  snapshot            Merge discovered MCP configs and write a backend snapshot file\n  inspect             Print the merged server inventory and duplicate resolution\n  install             Snapshot backend MCPs, generate policy, and rewire Claude/Codex/OpenCode to use only mcp-kingdom\n  auth login          Bootstrap OAuth tokens for an auth-gated backend server\n\nExamples:\n  node dist/cli.js snapshot --output ~/.mcp-kingdom/backends.json\n  node dist/cli.js inspect --tool-counts\n  node dist/cli.js inspect --backend ~/.mcp-kingdom/backends.json --tool-counts\n  node dist/cli.js install\n  node dist/cli.js install --targets claude,codex,opencode --strict-verify\n  node dist/cli.js install --exclude-servers blade-mcp,slack\n  node dist/cli.js install --policy ~/.mcp-kingdom/policy.json --verify-timeout-ms ${DEFAULT_VERIFY_TIMEOUT_MS}\n  node dist/cli.js auth login --server slack\n  MCP_KINGDOM_CONFIG_PATH=~/.mcp-kingdom/backends.json node dist/cli.js\n`);
 }
 
 main().catch((error) => {
