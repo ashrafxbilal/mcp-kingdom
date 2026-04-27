@@ -61,6 +61,8 @@ The installer will:
 - write a backend tool policy to `~/.mcp-kingdom/policy.json`
 - verify `tools/list` for every backend and safe-probe read-only tools when possible
 - rewrite supported client configs so the front door is only `mcp-kingdom`
+- trim Claude MCP permissions down to the `mcp-kingdom` front door only
+- clean stale backend `mcp__server__tool` entries from `~/.claude/settings.local.json`
 - create backups before overwriting config files
 
 After install, you can run a broad verification pass with:

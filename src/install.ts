@@ -126,7 +126,6 @@ export async function installMcpKingdom(options: InstallOptions = {}): Promise<I
         auditLogPath,
         policyPath,
         graphLaunch,
-        policy,
         dryRun: options.dryRun,
       });
       changedFiles.push(...result.changedFiles);
@@ -231,7 +230,6 @@ async function installClaude({
   auditLogPath,
   policyPath,
   graphLaunch,
-  policy,
   dryRun,
 }: {
   homeDir: string;
@@ -239,7 +237,6 @@ async function installClaude({
   auditLogPath: string;
   policyPath: string;
   graphLaunch: GraphLaunchSpec;
-  policy: GraphPolicyDocument;
   dryRun?: boolean;
 }): Promise<{ changedFiles: string[]; backups: string[] }> {
   const changedFiles: string[] = [];
@@ -266,29 +263,25 @@ async function installClaude({
 
   const settingsPath = path.join(homeDir, '.claude', 'settings.json');
   const settingsChanged = await writeClaudeLikeJson(settingsPath, (current) => {
-    const permissions = current.permissions && typeof current.permissions === 'object' && !Array.isArray(current.permissions)
-      ? { ...current.permissions as Record<string, unknown> }
-      : {};
-    const managedAllowlist = new Set(getClaudeAllowlist(policy));
-    const allow = Array.isArray(permissions.allow)
-      ? [...permissions.allow as unknown[]].filter((entry) => !isManagedClaudeMcpPermission(entry, managedAllowlist))
-      : [];
-    for (const toolName of managedAllowlist) {
-      if (!allow.includes(toolName)) {
-        allow.push(toolName);
-      }
-    }
+    const nextPermissions = updateClaudePermissions(
+      current.permissions,
+      sanitizeClaudeAllowEntries(current.permissions, { addManagedAllowlist: true }),
+    );
 
-    return {
+    const next: Record<string, unknown> = {
       ...current,
       mcpServers: {
         'mcp-kingdom': entry,
       },
-      permissions: {
-        ...permissions,
-        allow,
-      },
     };
+
+    if (nextPermissions) {
+      next.permissions = nextPermissions;
+    } else {
+      delete next.permissions;
+    }
+
+    return next;
   }, dryRun);
 
   if (settingsChanged.changed) {
@@ -296,6 +289,30 @@ async function installClaude({
   }
   if (settingsChanged.backup) {
     backups.push(settingsChanged.backup);
+  }
+
+  const settingsLocalPath = path.join(homeDir, '.claude', 'settings.local.json');
+  const settingsLocalChanged = await writeClaudeLikeJson(settingsLocalPath, (current) => {
+    const nextPermissions = updateClaudePermissions(
+      current.permissions,
+      sanitizeClaudeAllowEntries(current.permissions, { addManagedAllowlist: false }),
+    );
+
+    const next = { ...current };
+    if (nextPermissions) {
+      next.permissions = nextPermissions;
+    } else {
+      delete next.permissions;
+    }
+
+    return next;
+  }, dryRun);
+
+  if (settingsLocalChanged.changed) {
+    changedFiles.push(settingsLocalPath);
+  }
+  if (settingsLocalChanged.backup) {
+    backups.push(settingsLocalChanged.backup);
   }
 
   return { changedFiles, backups };
@@ -492,15 +509,60 @@ function sanitizeOpenCodePermission(permission: unknown): unknown {
   );
 }
 
-function getClaudeAllowlist(policy: GraphPolicyDocument): string[] {
-  const dynamicBackendAllowlist = Object.entries(policy.servers)
-    .flatMap(([server, entry]) => entry.allowedTools.map((toolName) => `mcp__${server}__${toolName}`))
-    .sort((left, right) => left.localeCompare(right));
+function sanitizeClaudeAllowEntries(
+  permissions: unknown,
+  options: { addManagedAllowlist: boolean },
+): string[] {
+  const existingPermissions = permissions && typeof permissions === 'object' && !Array.isArray(permissions)
+    ? permissions as Record<string, unknown>
+    : {};
+  const allow = Array.isArray(existingPermissions.allow)
+    ? existingPermissions.allow.filter((entry): entry is string => typeof entry === 'string')
+    : [];
 
-  return [
-    ...GRAPH_TOOL_ALLOWLIST,
-    ...dynamicBackendAllowlist,
-  ];
+  const next: string[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of allow) {
+    if (isClaudeMcpPermission(entry)) {
+      continue;
+    }
+    if (seen.has(entry)) {
+      continue;
+    }
+    seen.add(entry);
+    next.push(entry);
+  }
+
+  if (options.addManagedAllowlist) {
+    for (const entry of GRAPH_TOOL_ALLOWLIST) {
+      if (seen.has(entry)) {
+        continue;
+      }
+      seen.add(entry);
+      next.push(entry);
+    }
+  }
+
+  return next;
+}
+
+function updateClaudePermissions(
+  permissions: unknown,
+  allow: string[],
+): Record<string, unknown> | undefined {
+  if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) {
+    return allow.length > 0 ? { allow } : undefined;
+  }
+
+  const next = { ...permissions as Record<string, unknown> };
+  if (allow.length > 0) {
+    next.allow = allow;
+  } else {
+    delete next.allow;
+  }
+
+  return Object.keys(next).length > 0 ? next : undefined;
 }
 
 function mergeOpenCodePermission(permission: unknown, policy: GraphPolicyDocument): unknown {
@@ -562,34 +624,38 @@ function normalizeOpenCodeToolPrefix(value: string): string {
 }
 
 async function readExistingToolPermissionIndex(homeDir: string): Promise<ExistingToolPermissionIndex> {
-  const settingsPath = path.join(homeDir, '.claude', 'settings.json');
-  if (!(await fileExists(settingsPath))) {
-    return {};
-  }
-
-  const settings = await readJsonObjectOrDefault(settingsPath);
-  const permissions = settings.permissions;
-  if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) {
-    return {};
-  }
-
-  const allow = Array.isArray((permissions as Record<string, unknown>).allow)
-    ? ((permissions as Record<string, unknown>).allow as unknown[]).filter((entry): entry is string => typeof entry === 'string')
-    : [];
-
   const index: ExistingToolPermissionIndex = {};
-  for (const entry of allow) {
-    const match = /^mcp__(.+?)__(.+)$/.exec(entry);
-    if (!match) {
+  for (const settingsPath of [
+    path.join(homeDir, '.claude', 'settings.json'),
+    path.join(homeDir, '.claude', 'settings.local.json'),
+  ]) {
+    if (!(await fileExists(settingsPath))) {
       continue;
     }
-    const [, server, tool] = match;
-    if (FRONT_DOOR_SERVER_NAMES.includes(server as typeof FRONT_DOOR_SERVER_NAMES[number])) {
+
+    const settings = await readJsonObjectOrDefault(settingsPath);
+    const permissions = settings.permissions;
+    if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) {
       continue;
     }
-    index[server] ??= [];
-    if (!index[server].includes(tool)) {
-      index[server].push(tool);
+
+    const allow = Array.isArray((permissions as Record<string, unknown>).allow)
+      ? ((permissions as Record<string, unknown>).allow as unknown[]).filter((entry): entry is string => typeof entry === 'string')
+      : [];
+
+    for (const entry of allow) {
+      const match = /^mcp__(.+?)__(.+)$/.exec(entry);
+      if (!match) {
+        continue;
+      }
+      const [, server, tool] = match;
+      if (FRONT_DOOR_SERVER_NAMES.includes(server as typeof FRONT_DOOR_SERVER_NAMES[number])) {
+        continue;
+      }
+      index[server] ??= [];
+      if (!index[server].includes(tool)) {
+        index[server].push(tool);
+      }
     }
   }
 
@@ -673,13 +739,6 @@ async function migrateLegacyState({
   return { changedFiles, backups };
 }
 
-function isFrontDoorAllowlistEntry(entry: unknown): boolean {
-  if (typeof entry !== 'string') {
-    return false;
-  }
-  return FRONT_DOOR_SERVER_NAMES.some((serverName) => entry.startsWith(`mcp__${serverName}__`));
-}
-
 function isFrontDoorOpenCodePattern(entry: string): boolean {
   return [
     'mcp-kingdom_*',
@@ -689,11 +748,8 @@ function isFrontDoorOpenCodePattern(entry: string): boolean {
   ].includes(entry);
 }
 
-function isManagedClaudeMcpPermission(entry: unknown, allowlist: Set<string>): boolean {
-  if (typeof entry !== 'string') {
-    return false;
-  }
-  return entry.startsWith('mcp__') && !allowlist.has(entry);
+function isClaudeMcpPermission(entry: string): boolean {
+  return entry.startsWith('mcp__');
 }
 
 function looksLikeManagedOpenCodeMcpPattern(entry: string): boolean {

@@ -43,11 +43,34 @@ describe('installMcpKingdom', () => {
     await fs.writeFile(
       path.join(homeDir, '.claude', 'settings.json'),
       JSON.stringify({
-        permissions: { allow: ['Read', 'mcp__mcp-graph__list_servers'] },
+        permissions: {
+          allow: [
+            'Read',
+            'Glob',
+            'mcp__mcp-graph__list_servers',
+            'mcp__old-claude__run',
+          ],
+        },
         mcpServers: {
           'old-claude': {
             command: 'old-claude',
           },
+        },
+      }, null, 2),
+      'utf8',
+    );
+
+    await fs.writeFile(
+      path.join(homeDir, '.claude', 'settings.local.json'),
+      JSON.stringify({
+        outputStyle: 'Explanatory',
+        permissions: {
+          allow: [
+            'WebSearch',
+            'Bash(ls:*)',
+            'mcp__old-claude__list',
+            'mcp__mcp-kingdom__search_tools',
+          ],
         },
       }, null, 2),
       'utf8',
@@ -129,6 +152,19 @@ describe('installMcpKingdom', () => {
       expect(settings.permissions.allow).toContain(`mcp__mcp-kingdom__${toolName}`);
     }
     expect(settings.permissions.allow).not.toContain('mcp__mcp-graph__list_servers');
+    expect(settings.permissions.allow).not.toContain('mcp__old-claude__run');
+    expect(settings.permissions.allow).toContain('Read');
+    expect(settings.permissions.allow).toContain('Glob');
+
+    const localSettings = JSON.parse(await fs.readFile(path.join(homeDir, '.claude', 'settings.local.json'), 'utf8')) as {
+      outputStyle: string;
+      permissions: { allow: string[] };
+    };
+    expect(localSettings.outputStyle).toBe('Explanatory');
+    expect(localSettings.permissions.allow).toEqual([
+      'WebSearch',
+      'Bash(ls:*)',
+    ]);
 
     const opencode = JSON.parse(await fs.readFile(path.join(homeDir, '.opencode.json'), 'utf8')) as {
       permission: Record<string, unknown>;

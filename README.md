@@ -45,6 +45,8 @@ Behind the scenes it can:
 - shape large tool results with output modes, field projection, and array limiting
 - snapshot your existing MCP inventory into a dedicated backend config file
 - rewrite supported client configs so they load only `mcp-kingdom`
+- trim Claude MCP permissions down to the `mcp-kingdom` front door while preserving generic Bash/file/web permissions
+- scrub stale backend `mcp__server__tool` entries from `~/.claude/settings.local.json`
 - update client-native allowlists where the client actually supports them
 - back up rewritten client config files before changing them
 - expose inventory counts so you can verify how much tool surface moved behind the gateway
@@ -124,6 +126,8 @@ This install command:
 - writes `~/.mcp-kingdom/policy.json`
 - performs backend verification with `tools/list` and safe read-only probes when available
 - backs up and rewrites supported client configs so they point only to this local `mcp-kingdom` checkout
+- trims Claude-side MCP permissions to `mcp-kingdom` only instead of mirroring every backend tool back into Claude
+- cleans stale backend MCP permission overrides from `~/.claude/settings.local.json`
 
 Supported install targets:
 
