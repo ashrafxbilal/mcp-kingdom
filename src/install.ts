@@ -210,21 +210,28 @@ async function installOpenCode({
   dryRun?: boolean;
 }): Promise<{ changedFiles: string[]; backups: string[] }> {
   const filePath = await resolveOpenCodeConfigPath(homeDir);
-  const changed = await writeClaudeLikeJson(filePath, (current) => ({
-    $schema: current.$schema ?? 'https://opencode.ai/config.json',
-    ...current,
-    mcp: {
-      'mcp-graph': {
-        type: 'local',
-        command: [graphLaunch.command, ...graphLaunch.args],
-        enabled: true,
-        environment: {
-          MCP_GRAPH_CONFIG_PATH: backendPath,
-          MCP_GRAPH_AUDIT_LOG_PATH: auditLogPath,
+  const changed = await writeClaudeLikeJson(filePath, (current) => {
+    const next: Record<string, unknown> = {
+      ...current,
+      $schema: current.$schema ?? 'https://opencode.ai/config.json',
+      mcp: {
+        'mcp-graph': {
+          type: 'local',
+          command: [graphLaunch.command, ...graphLaunch.args],
+          enabled: true,
+          environment: {
+            MCP_GRAPH_CONFIG_PATH: backendPath,
+            MCP_GRAPH_AUDIT_LOG_PATH: auditLogPath,
+          },
         },
       },
-    },
-  }), dryRun);
+    };
+    const permission = sanitizeOpenCodePermission(current.permission);
+    if (permission !== undefined) {
+      next.permission = permission;
+    }
+    return next;
+  }, dryRun);
 
   return {
     changedFiles: changed.changed ? [filePath] : [],
@@ -353,6 +360,17 @@ function createClaudeGraphEntry(graphLaunch: GraphLaunchSpec, backendPath: strin
 
 function tomlString(value: string): string {
   return JSON.stringify(value);
+}
+
+function sanitizeOpenCodePermission(permission: unknown): unknown {
+  if (!permission || typeof permission !== 'object' || Array.isArray(permission)) {
+    return permission;
+  }
+
+  return Object.fromEntries(
+    Object.entries(permission as Record<string, unknown>)
+      .filter(([key]) => !key.startsWith('mcp__')),
+  );
 }
 
 async function resolveOpenCodeConfigPath(homeDir: string): Promise<string> {

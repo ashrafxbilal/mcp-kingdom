@@ -47,6 +47,9 @@ After `node dist/cli.js install --targets opencode`:
 - your active OpenCode config should contain only one enabled MCP entry: `mcp-graph`
 - your previous OpenCode MCP servers should be preserved in `~/.mcp-graph/backends.json`
 - OpenCode should launch `mcp-graph` from your local clone by absolute path
+- OpenCode should not contain Claude-style permission keys like `mcp__server__tool`
+
+If you need to override OpenCode MCP permissions manually, use OpenCode tool wildcards like `mcp-graph_*`. Do not use Claude/Codex-style `mcp__...` permission entries.
 
 ## OpenCode-Only Verification
 

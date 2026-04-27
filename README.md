@@ -190,6 +190,8 @@ OpenCode can load `mcp-graph` as a local MCP server:
 
 As with Claude and Codex, the token benefit comes only if the other MCPs are moved behind the backend snapshot and `mcp-graph` is the only active front-door MCP.
 
+Do not copy Claude-style permission keys like `mcp__server__tool` into OpenCode. OpenCode permissions use its own tool-name patterns, and MCP permissions should be expressed with OpenCode wildcards like `mcp-graph_*` only if you need to override the default behavior. By default, OpenCode already allows tools to run.
+
 ## CLI
 
 ### Run the server

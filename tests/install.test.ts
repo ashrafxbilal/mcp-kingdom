@@ -66,6 +66,10 @@ describe('installMcpGraph', () => {
     await fs.writeFile(
       path.join(homeDir, '.opencode.json'),
       JSON.stringify({
+        permission: {
+          read: 'allow',
+          'mcp__old-opencode__list': 'allow',
+        },
         mcp: {
           'old-opencode': {
             type: 'local',
@@ -109,12 +113,15 @@ describe('installMcpGraph', () => {
     }
 
     const opencode = JSON.parse(await fs.readFile(path.join(homeDir, '.opencode.json'), 'utf8')) as {
+      permission: Record<string, unknown>;
       mcp: Record<string, { type: string; command: string[] }>;
     };
     expect(Object.keys(opencode.mcp)).toEqual(['mcp-graph']);
     expect(opencode.mcp['mcp-graph']?.type).toBe('local');
     expect(opencode.mcp['mcp-graph']?.command[0]).toContain('tsx');
     expect(opencode.mcp['mcp-graph']?.command[1]).toMatch(/src\/cli\.ts$/);
+    expect(opencode.permission.read).toBe('allow');
+    expect(Object.keys(opencode.permission)).not.toContain('mcp__old-opencode__list');
 
     const codex = await fs.readFile(path.join(homeDir, '.codex', 'config.toml'), 'utf8');
     expect(codex).toContain('[mcp_servers.mcp-graph]');
