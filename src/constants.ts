@@ -4,8 +4,10 @@ import path from 'node:path';
 export const DEFAULT_GRAPH_HOME = path.join(os.homedir(), '.mcp-graph');
 export const DEFAULT_BACKEND_SNAPSHOT = path.join(DEFAULT_GRAPH_HOME, 'backends.json');
 export const DEFAULT_AUDIT_LOG_PATH = path.join(DEFAULT_GRAPH_HOME, 'audit.log');
+export const DEFAULT_POLICY_PATH = path.join(DEFAULT_GRAPH_HOME, 'policy.json');
 export const DEFAULT_CACHE_DIR = path.join(DEFAULT_GRAPH_HOME, 'cache');
 export const DEFAULT_TOOL_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
+export const DEFAULT_VERIFY_TIMEOUT_MS = 1000 * 8;
 
 export const GRAPH_TOOL_NAMES = [
   'list_servers',

@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { DEFAULT_BACKEND_SNAPSHOT, GRAPH_TOOL_NAMES } from './constants.js';
+import { DEFAULT_BACKEND_SNAPSHOT, DEFAULT_POLICY_PATH, DEFAULT_VERIFY_TIMEOUT_MS, GRAPH_TOOL_NAMES } from './constants.js';
 import { loadMergedServerConfigs, snapshotMergedConfig } from './config.js';
 import { GraphRegistry } from './clients.js';
 import { installMcpGraph, type InstallTarget } from './install.js';
 import { AuditLogger } from './logger.js';
-import { ensureDir, safeJsonStringify } from './utils.js';
+import { loadGraphPolicy } from './policy.js';
+import { ensureDir, fileExists, safeJsonStringify } from './utils.js';
 import { runGraphServer } from './server.js';
 
 async function main(): Promise<void> {
@@ -44,10 +45,11 @@ async function handleSnapshot(args: string[]): Promise<void> {
 }
 
 async function handleInspect(args: string[]): Promise<void> {
-  const config = await loadMergedServerConfigs();
+  const config = await loadInspectConfig(args);
   const includeToolCounts = hasFlag(args, '--tool-counts');
   const refresh = hasFlag(args, '--refresh');
-  const registry = includeToolCounts ? new GraphRegistry(config, new AuditLogger()) : undefined;
+  const policy = await loadGraphPolicy();
+  const registry = includeToolCounts ? new GraphRegistry(config, new AuditLogger(), policy) : undefined;
   const inventory = includeToolCounts
     ? await registry?.getServerInventory({ includeToolCounts: true, refresh })
     : undefined;
@@ -62,6 +64,8 @@ async function handleInspect(args: string[]): Promise<void> {
       ...(includeToolCounts ? {
         toolCount: inventory?.entries.find((item) => item.server.name === entry.name)?.toolCount ?? 0,
         error: inventory?.entries.find((item) => item.server.name === entry.name)?.error,
+        policyMode: policy?.servers?.[entry.name]?.mode,
+        allowedToolCount: policy?.servers?.[entry.name]?.allowedTools.length,
       } : {}),
     })),
     duplicates: config.duplicates.map((entry) => ({
@@ -73,22 +77,48 @@ async function handleInspect(args: string[]): Promise<void> {
       totalBackendTools: inventory?.entries.reduce((sum, item) => sum + (item.toolCount ?? 0), 0) ?? 0,
       frontDoorToolCount: GRAPH_TOOL_NAMES.length,
       errors: inventory?.errors ?? [],
+      policyPath: process.env.MCP_GRAPH_POLICY_PATH ?? DEFAULT_POLICY_PATH,
+      policySummary: policy?.summary,
     } : {}),
   };
   process.stdout.write(`${safeJsonStringify(payload, 2)}\n`);
   await registry?.close();
 }
 
+async function loadInspectConfig(args: string[]) {
+  const explicitBackend = readFlag(args, '--backend') ?? process.env.MCP_GRAPH_CONFIG_PATH;
+  if (explicitBackend) {
+    return loadMergedServerConfigs({ explicitConfigPaths: [explicitBackend] });
+  }
+
+  const activeConfig = await loadMergedServerConfigs();
+  if (activeConfig.servers.length > 0) {
+    return activeConfig;
+  }
+
+  if (await fileExists(DEFAULT_BACKEND_SNAPSHOT)) {
+    return loadMergedServerConfigs({ explicitConfigPaths: [DEFAULT_BACKEND_SNAPSHOT] });
+  }
+
+  return activeConfig;
+}
+
 async function handleInstall(args: string[]): Promise<void> {
   const backendPath = readFlag(args, '--backend');
   const auditLogPath = readFlag(args, '--audit-log');
+  const policyPath = readFlag(args, '--policy');
+  const verifyTimeoutMs = readFlag(args, '--verify-timeout-ms');
   const dryRun = hasFlag(args, '--dry-run');
+  const strictVerify = hasFlag(args, '--strict-verify');
   const targets = parseTargets(readFlag(args, '--targets'));
   const result = await installMcpGraph({
     backendPath,
     auditLogPath,
+    policyPath,
     dryRun,
+    strictVerify,
     targets,
+    ...(verifyTimeoutMs ? { verifyTimeoutMs: Number.parseInt(verifyTimeoutMs, 10) } : {}),
   });
 
   process.stdout.write(`${safeJsonStringify(result, 2)}\n`);
@@ -121,7 +151,7 @@ function parseTargets(value?: string): InstallTarget[] | undefined {
 }
 
 function printHelp(): void {
-  process.stdout.write(`mcp-graph\n\nCommands:\n  serve               Run the MCP server over stdio (default)\n  snapshot            Merge discovered MCP configs and write a backend snapshot file\n  inspect             Print the merged server inventory and duplicate resolution\n  install             Snapshot backend MCPs and rewire Claude/Codex/OpenCode to use only mcp-graph\n\nExamples:\n  node dist/cli.js snapshot --output ~/.mcp-graph/backends.json\n  node dist/cli.js inspect --tool-counts\n  node dist/cli.js install\n  node dist/cli.js install --targets claude,codex,opencode\n  MCP_GRAPH_CONFIG_PATH=~/.mcp-graph/backends.json node dist/cli.js\n`);
+  process.stdout.write(`mcp-graph\n\nCommands:\n  serve               Run the MCP server over stdio (default)\n  snapshot            Merge discovered MCP configs and write a backend snapshot file\n  inspect             Print the merged server inventory and duplicate resolution\n  install             Snapshot backend MCPs, generate policy, and rewire Claude/Codex/OpenCode to use only mcp-graph\n\nExamples:\n  node dist/cli.js snapshot --output ~/.mcp-graph/backends.json\n  node dist/cli.js inspect --tool-counts\n  node dist/cli.js inspect --backend ~/.mcp-graph/backends.json --tool-counts\n  node dist/cli.js install\n  node dist/cli.js install --targets claude,codex,opencode --strict-verify\n  node dist/cli.js install --policy ~/.mcp-graph/policy.json --verify-timeout-ms ${DEFAULT_VERIFY_TIMEOUT_MS}\n  MCP_GRAPH_CONFIG_PATH=~/.mcp-graph/backends.json node dist/cli.js\n`);
 }
 
 main().catch((error) => {

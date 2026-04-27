@@ -5,6 +5,7 @@ import { DEFAULT_BACKEND_SNAPSHOT, DEFAULT_GRAPH_HOME } from './constants.js';
 import { loadMergedServerConfigs } from './config.js';
 import { GraphRegistry } from './clients.js';
 import { AuditLogger } from './logger.js';
+import { loadGraphPolicy } from './policy.js';
 import type { BatchCallToolStep, LoadedServerConfig } from './types.js';
 import { parseObjectArgument, safeJsonStringify } from './utils.js';
 import { MCP_GRAPH_VERSION } from './version.js';
@@ -21,7 +22,8 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
 }> {
   const loadedConfig = await loadMergedServerConfigs({ cwd: options.cwd, homeDir: options.homeDir });
   const logger = new AuditLogger(process.env.MCP_GRAPH_AUDIT_LOG_PATH);
-  const registry = new GraphRegistry(loadedConfig, logger);
+  const policy = await loadGraphPolicy();
+  const registry = new GraphRegistry(loadedConfig, logger, policy);
 
   const server = new McpServer({
     name: 'mcp-graph',
@@ -48,6 +50,12 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
         sourceFile: entry.sourceFile,
         ...(includeMetadata ? { metadata: entry.metadata ?? {} } : {}),
         ...(includeToolCounts ? { toolCount } : {}),
+        ...(policy?.servers?.[entry.name]
+          ? {
+            policyMode: policy.servers[entry.name].mode,
+            allowedToolCount: policy.servers[entry.name].allowedTools.length,
+          }
+          : {}),
         ...(error ? { error } : {}),
       }));
 

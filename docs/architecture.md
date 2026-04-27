@@ -66,7 +66,13 @@ The default behavior is deliberately conservative: return a truncated text previ
 
 ## Install Model
 
-The installer snapshots all discovered backend MCPs into `~/.mcp-graph/backends.json`, then rewrites supported client configs so that they load only `mcp-graph`.
+The installer snapshots all discovered backend MCPs into `~/.mcp-graph/backends.json`, generates a backend tool policy in `~/.mcp-graph/policy.json`, and then rewrites supported client configs so that they load only `mcp-graph`.
+
+The generated policy is conservative:
+
+- if a backend can be enumerated, its discovered tool list becomes the allow-listed runtime surface
+- if a safe read-only tool with zero required arguments exists, the installer probes it and records the result
+- if a backend cannot be enumerated, the policy falls back to passthrough mode for that server unless you install with `--strict-verify`
 
 Backups are created before overwriting existing client config files.
 

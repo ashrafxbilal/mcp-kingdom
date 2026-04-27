@@ -40,6 +40,10 @@ export interface LoadedServerConfig {
   loadedFiles: string[];
 }
 
+export interface ExistingToolPermissionIndex {
+  [serverName: string]: string[];
+}
+
 export interface ToolMatch {
   server: string;
   tool: Tool;
@@ -103,4 +107,41 @@ export interface BatchCallToolParams {
   mode?: 'parallel' | 'sequential';
   maxCharactersPerResult?: number;
   outputMode?: 'content' | 'structured' | 'full';
+}
+
+export interface GraphPolicyProbeResult {
+  tool?: string;
+  status: 'ok' | 'failed' | 'skipped';
+  reason?: string;
+}
+
+export interface GraphPolicyServerEntry {
+  mode: 'allow-listed' | 'passthrough';
+  allowedTools: string[];
+  sourceKind: SourceKind;
+  sourceFile: string;
+  transport: GraphTransport;
+  toolCount?: number;
+  error?: string;
+  fallbackSource?: 'existing-policy' | 'legacy-client-allowlist';
+  probe?: GraphPolicyProbeResult;
+}
+
+export interface GraphPolicySummary {
+  totalServers: number;
+  allowListedServers: number;
+  passthroughServers: number;
+  failedServers: number;
+  discoveredTools: number;
+  probeOkCount: number;
+  probeFailedCount: number;
+  probeSkippedCount: number;
+}
+
+export interface GraphPolicyDocument {
+  version: 1;
+  generatedAt: string;
+  verificationMode: 'inventory-only' | 'inventory-and-safe-probe';
+  servers: Record<string, GraphPolicyServerEntry>;
+  summary: GraphPolicySummary;
 }

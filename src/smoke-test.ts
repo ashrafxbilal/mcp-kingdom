@@ -90,7 +90,7 @@ async function runDiscoveryAndInstallSmokeTest({
 
   const discovered = await loadMergedServerConfigs({ cwd: tempProject, homeDir: tempHome, includeCodex: true });
   const discoveredNames = discovered.servers.map((entry) => entry.name);
-  for (const expectedName of ['project-backend', 'claude-backend', 'codex-backend', 'opencode-backend']) {
+  for (const expectedName of ['project-backend', 'claude-backend', 'settings-backend', 'codex-backend', 'opencode-backend']) {
     if (!discoveredNames.includes(expectedName)) {
       throw new Error(`Expected discovery to include ${expectedName}, got ${safeJsonStringify(discoveredNames, 2)}`);
     }
@@ -103,6 +103,7 @@ async function runDiscoveryAndInstallSmokeTest({
     cwd: tempProject,
     homeDir: tempHome,
     backendPath: path.join(tempHome, '.mcp-graph', 'backends.json'),
+    policyPath: path.join(tempHome, '.mcp-graph', 'policy.json'),
     auditLogPath: path.join(tempHome, '.mcp-graph', 'audit.log'),
     targets: ['claude', 'codex', 'opencode'],
   });
@@ -110,17 +111,27 @@ async function runDiscoveryAndInstallSmokeTest({
   if (installResult.targets.length !== 3) {
     throw new Error(`Expected three install targets, got ${safeJsonStringify(installResult, 2)}`);
   }
+  if (installResult.policySummary.totalServers !== 5) {
+    throw new Error(`Expected policy summary to include five servers, got ${safeJsonStringify(installResult.policySummary, 2)}`);
+  }
 
   const backendSnapshot = JSON.parse(await fs.readFile(path.join(tempHome, '.mcp-graph', 'backends.json'), 'utf8')) as {
     mcpServers: Record<string, unknown>;
   };
-  for (const expectedName of ['project-backend', 'claude-backend', 'codex-backend', 'opencode-backend']) {
+  for (const expectedName of ['project-backend', 'claude-backend', 'settings-backend', 'codex-backend', 'opencode-backend']) {
     if (!(expectedName in backendSnapshot.mcpServers)) {
       throw new Error(`Expected backend snapshot to include ${expectedName}`);
     }
   }
   if ('mcp-graph' in backendSnapshot.mcpServers) {
     throw new Error('Backend snapshot should not contain mcp-graph itself.');
+  }
+
+  const policy = JSON.parse(await fs.readFile(path.join(tempHome, '.mcp-graph', 'policy.json'), 'utf8')) as {
+    servers: Record<string, { mode: string; allowedTools: string[] }>;
+  };
+  if (policy.servers['project-backend']?.mode !== 'allow-listed') {
+    throw new Error(`Expected project-backend to be allow-listed, got ${safeJsonStringify(policy, 2)}`);
   }
 
   const claudeJson = JSON.parse(await fs.readFile(path.join(tempHome, '.claude.json'), 'utf8')) as {
@@ -142,6 +153,7 @@ async function runDiscoveryAndInstallSmokeTest({
     'mcp__mcp-graph__list_servers',
     'mcp__mcp-graph__search_tools',
     'mcp__mcp-graph__call_tool',
+    'mcp__project-backend__catalog',
   ]) {
     if (!claudeSettings.permissions?.allow?.includes(toolName)) {
       throw new Error(`Expected Claude settings allowlist to include ${toolName}`);
@@ -150,13 +162,21 @@ async function runDiscoveryAndInstallSmokeTest({
 
   const opencodeConfig = JSON.parse(await fs.readFile(path.join(tempHome, '.config', 'opencode', 'opencode.json'), 'utf8')) as {
     mcp: Record<string, unknown>;
+    permission?: Record<string, unknown>;
   };
   if (!opencodeConfig.mcp || !('mcp-graph' in opencodeConfig.mcp) || Object.keys(opencodeConfig.mcp).length !== 1) {
     throw new Error(`Expected OpenCode config to contain only mcp-graph, got ${safeJsonStringify(opencodeConfig, 2)}`);
   }
+  if (opencodeConfig.permission?.['mcp-graph_*'] !== 'allow') {
+    throw new Error(`Expected OpenCode permission to include mcp-graph_*, got ${safeJsonStringify(opencodeConfig.permission, 2)}`);
+  }
 
   const codexConfig = await fs.readFile(path.join(tempHome, '.codex', 'config.toml'), 'utf8');
-  if (!codexConfig.includes('[mcp_servers.mcp-graph]') || codexConfig.includes('[mcp_servers.codex-backend]')) {
+  if (
+    !codexConfig.includes('[mcp_servers.mcp-graph]')
+    || codexConfig.includes('[mcp_servers.codex-backend]')
+    || !codexConfig.includes('MCP_GRAPH_POLICY_PATH')
+  ) {
     throw new Error(`Unexpected Codex config after install:\n${codexConfig}`);
   }
 }

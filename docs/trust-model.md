@@ -5,6 +5,7 @@
 ## What `mcp-graph` Does
 
 - discovers backend MCP definitions
+- generates a runtime policy from discovered backend tool lists
 - proxies tool calls to those backends
 - caches tool metadata
 - rewrites local client configs so the gateway is the only active front door
@@ -23,7 +24,9 @@ If a backend MCP runs a local binary with full user privileges, that trust bound
 
 - `stdio` backends still run as local child processes
 - remote MCPs still receive requests with whatever static headers were configured
-- the gateway only reduces schema exposure and context growth; it does not change the security posture of the underlying tools
+- the generated policy can stop newly added backend tools from appearing until you refresh or reinstall
+- if a backend could not be enumerated during install, `mcp-graph` can intentionally fall back to passthrough mode for that server to avoid breaking existing workflows
+- the gateway still only reduces schema exposure and context growth; it does not change the security posture of the underlying tools
 
 ## Recommended Usage
 

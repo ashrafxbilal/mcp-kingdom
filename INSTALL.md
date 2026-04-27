@@ -37,6 +37,8 @@ The installer will:
 
 - discover your existing backend MCPs
 - write them to `~/.mcp-graph/backends.json`
+- write a backend tool policy to `~/.mcp-graph/policy.json`
+- verify `tools/list` for every backend and safe-probe read-only tools when possible
 - rewrite supported client configs so the front door is only `mcp-graph`
 - create backups before overwriting config files
 
@@ -46,6 +48,7 @@ After `node dist/cli.js install --targets opencode`:
 
 - your active OpenCode config should contain only one enabled MCP entry: `mcp-graph`
 - your previous OpenCode MCP servers should be preserved in `~/.mcp-graph/backends.json`
+- your backend tool policy should exist in `~/.mcp-graph/policy.json`
 - OpenCode should launch `mcp-graph` from your local clone by absolute path
 - OpenCode should not contain Claude-style permission keys like `mcp__server__tool`
 
@@ -78,6 +81,12 @@ From the `mcp-graph` repo:
 node dist/cli.js install --targets opencode
 ```
 
+If you want the install to fail instead of falling back to passthrough mode when some backends cannot be enumerated, use:
+
+```sh
+node dist/cli.js install --targets opencode --strict-verify
+```
+
 ### 3. Verify that OpenCode now loads only one front-door MCP
 
 ```sh
@@ -94,19 +103,21 @@ This is the first structural proof that prompt context should shrink: OpenCode i
 ### 4. Verify that the backend snapshot still contains the original MCP inventory
 
 ```sh
-MCP_GRAPH_CONFIG_PATH="$HOME/.mcp-graph/backends.json" node dist/cli.js inspect
+node dist/cli.js inspect
 ```
 
 For a broader smoke test:
 
 ```sh
-MCP_GRAPH_CONFIG_PATH="$HOME/.mcp-graph/backends.json" node dist/cli.js inspect --tool-counts
+node dist/cli.js inspect --tool-counts
 ```
 
 What this proves:
 
 - `inspect` proves the backend snapshot still contains your original MCP definitions
+- after `install`, `inspect` automatically uses `~/.mcp-graph/backends.json` when your client configs have already been rewired to only `mcp-graph`
 - `inspect --tool-counts` forces `mcp-graph` to fetch `tools/list` from each backend and count the tools
+- `~/.mcp-graph/policy.json` records which servers were allow-listed, which fell back to passthrough, and whether a safe read-only probe succeeded
 
 That second command is the fastest broad verification that backend MCP discovery is still working after the OpenCode rewrite.
 

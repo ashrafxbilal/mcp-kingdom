@@ -1,8 +1,16 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_AUDIT_LOG_PATH, DEFAULT_BACKEND_SNAPSHOT, GRAPH_TOOL_NAMES } from './constants.js';
-import { snapshotMergedConfig } from './config.js';
+import {
+  DEFAULT_AUDIT_LOG_PATH,
+  DEFAULT_BACKEND_SNAPSHOT,
+  DEFAULT_POLICY_PATH,
+  DEFAULT_VERIFY_TIMEOUT_MS,
+  GRAPH_TOOL_NAMES,
+} from './constants.js';
+import { loadExplicitServerMap, loadMergedServerConfigs, snapshotMergedConfig } from './config.js';
+import { buildGraphPolicy, loadGraphPolicy } from './policy.js';
+import type { ExistingToolPermissionIndex, GraphPolicyDocument } from './types.js';
 import { ensureDir, fileExists, readJsonFile, safeJsonStringify, timestampId, writeJsonFile } from './utils.js';
 
 export type InstallTarget = 'claude' | 'codex' | 'opencode';
@@ -12,17 +20,22 @@ export interface InstallOptions {
   homeDir?: string;
   backendPath?: string;
   auditLogPath?: string;
+  policyPath?: string;
   targets?: InstallTarget[];
+  strictVerify?: boolean;
+  verifyTimeoutMs?: number;
   dryRun?: boolean;
 }
 
 export interface InstallSummary {
   backendPath: string;
   auditLogPath: string;
+  policyPath: string;
   backendServerCount: number;
   targets: InstallTarget[];
   changedFiles: string[];
   backups: string[];
+  policySummary: GraphPolicyDocument['summary'];
 }
 
 const GRAPH_TOOL_ALLOWLIST = [
@@ -39,6 +52,7 @@ export async function installMcpGraph(options: InstallOptions = {}): Promise<Ins
   const homeDir = options.homeDir ?? process.env.HOME ?? process.env.USERPROFILE ?? cwd;
   const backendPath = options.backendPath ?? DEFAULT_BACKEND_SNAPSHOT;
   const auditLogPath = options.auditLogPath ?? DEFAULT_AUDIT_LOG_PATH;
+  const policyPath = options.policyPath ?? DEFAULT_POLICY_PATH;
   const graphLaunch = await resolveGraphLaunchSpec();
   const targets = options.targets ?? await detectInstallTargets(homeDir);
   const changedFiles: string[] = [];
@@ -58,27 +72,67 @@ export async function installMcpGraph(options: InstallOptions = {}): Promise<Ins
   };
   delete finalSnapshot.mcpServers['mcp-graph'];
 
+  const finalLoadedConfig = loadExplicitServerMap(finalSnapshot.mcpServers, backendPath);
+  const existingPolicy = await loadGraphPolicy(policyPath);
+  const knownAllowedTools = await readExistingToolPermissionIndex(homeDir);
+  const policy = await buildGraphPolicy(finalLoadedConfig, {
+    auditLogPath,
+    existingPolicy,
+    knownAllowedTools,
+    verifyTimeoutMs: options.verifyTimeoutMs ?? DEFAULT_VERIFY_TIMEOUT_MS,
+  });
+
+  if (options.strictVerify && policy.summary.failedServers > 0) {
+    throw new Error(
+      `Strict verification failed for ${policy.summary.failedServers} server(s). Review ${policyPath} generation in non-strict mode first or fix the failing backends before installing.`,
+    );
+  }
+
+  changedFiles.push(backendPath, policyPath);
   if (!options.dryRun) {
     await ensureDir(path.dirname(backendPath));
     await writeJsonFile(backendPath, finalSnapshot);
-    changedFiles.push(backendPath);
+    await writeJsonFile(policyPath, policy);
   }
 
   for (const target of targets) {
     if (target === 'claude') {
-      const result = await installClaude({ homeDir, backendPath, auditLogPath, graphLaunch, dryRun: options.dryRun });
+      const result = await installClaude({
+        homeDir,
+        backendPath,
+        auditLogPath,
+        policyPath,
+        graphLaunch,
+        policy,
+        dryRun: options.dryRun,
+      });
       changedFiles.push(...result.changedFiles);
       backups.push(...result.backups);
       continue;
     }
     if (target === 'codex') {
-      const result = await installCodex({ homeDir, backendPath, auditLogPath, graphLaunch, dryRun: options.dryRun });
+      const result = await installCodex({
+        homeDir,
+        backendPath,
+        auditLogPath,
+        policyPath,
+        graphLaunch,
+        dryRun: options.dryRun,
+      });
       changedFiles.push(...result.changedFiles);
       backups.push(...result.backups);
       continue;
     }
     if (target === 'opencode') {
-      const result = await installOpenCode({ homeDir, backendPath, auditLogPath, graphLaunch, dryRun: options.dryRun });
+      const result = await installOpenCode({
+        homeDir,
+        backendPath,
+        auditLogPath,
+        policyPath,
+        graphLaunch,
+        policy,
+        dryRun: options.dryRun,
+      });
       changedFiles.push(...result.changedFiles);
       backups.push(...result.backups);
     }
@@ -87,10 +141,12 @@ export async function installMcpGraph(options: InstallOptions = {}): Promise<Ins
   return {
     backendPath,
     auditLogPath,
+    policyPath,
     backendServerCount: Object.keys(finalSnapshot.mcpServers).length,
     targets,
     changedFiles: [...new Set(changedFiles)],
     backups: [...new Set(backups)],
+    policySummary: policy.summary,
   };
 }
 
@@ -131,18 +187,22 @@ async function installClaude({
   homeDir,
   backendPath,
   auditLogPath,
+  policyPath,
   graphLaunch,
+  policy,
   dryRun,
 }: {
   homeDir: string;
   backendPath: string;
   auditLogPath: string;
+  policyPath: string;
   graphLaunch: GraphLaunchSpec;
+  policy: GraphPolicyDocument;
   dryRun?: boolean;
 }): Promise<{ changedFiles: string[]; backups: string[] }> {
   const changedFiles: string[] = [];
   const backups: string[] = [];
-  const entry = createClaudeGraphEntry(graphLaunch, backendPath, auditLogPath);
+  const entry = createClaudeGraphEntry(graphLaunch, backendPath, auditLogPath, policyPath);
 
   for (const filePath of [
     path.join(homeDir, '.claude.json'),
@@ -168,7 +228,7 @@ async function installClaude({
       ? { ...current.permissions as Record<string, unknown> }
       : {};
     const allow = Array.isArray(permissions.allow) ? [...permissions.allow as unknown[]] : [];
-    for (const toolName of GRAPH_TOOL_ALLOWLIST) {
+    for (const toolName of getClaudeAllowlist(policy)) {
       if (!allow.includes(toolName)) {
         allow.push(toolName);
       }
@@ -200,13 +260,17 @@ async function installOpenCode({
   homeDir,
   backendPath,
   auditLogPath,
+  policyPath,
   graphLaunch,
+  policy,
   dryRun,
 }: {
   homeDir: string;
   backendPath: string;
   auditLogPath: string;
+  policyPath: string;
   graphLaunch: GraphLaunchSpec;
+  policy: GraphPolicyDocument;
   dryRun?: boolean;
 }): Promise<{ changedFiles: string[]; backups: string[] }> {
   const filePath = await resolveOpenCodeConfigPath(homeDir);
@@ -217,16 +281,17 @@ async function installOpenCode({
       mcp: {
         'mcp-graph': {
           type: 'local',
-          command: [graphLaunch.command, ...graphLaunch.args],
-          enabled: true,
-          environment: {
-            MCP_GRAPH_CONFIG_PATH: backendPath,
-            MCP_GRAPH_AUDIT_LOG_PATH: auditLogPath,
-          },
+        command: [graphLaunch.command, ...graphLaunch.args],
+        enabled: true,
+        environment: {
+          MCP_GRAPH_CONFIG_PATH: backendPath,
+          MCP_GRAPH_AUDIT_LOG_PATH: auditLogPath,
+          MCP_GRAPH_POLICY_PATH: policyPath,
         },
       },
+    },
     };
-    const permission = sanitizeOpenCodePermission(current.permission);
+    const permission = mergeOpenCodePermission(current.permission, policy);
     if (permission !== undefined) {
       next.permission = permission;
     }
@@ -243,12 +308,14 @@ async function installCodex({
   homeDir,
   backendPath,
   auditLogPath,
+  policyPath,
   graphLaunch,
   dryRun,
 }: {
   homeDir: string;
   backendPath: string;
   auditLogPath: string;
+  policyPath: string;
   graphLaunch: GraphLaunchSpec;
   dryRun?: boolean;
 }): Promise<{ changedFiles: string[]; backups: string[] }> {
@@ -260,7 +327,7 @@ async function installCodex({
     '[mcp_servers.mcp-graph]',
     `command = ${tomlString(graphLaunch.command)}`,
     `args = [${graphLaunch.args.map((arg) => tomlString(arg)).join(', ')}]`,
-    `env = { MCP_GRAPH_CONFIG_PATH = ${tomlString(backendPath)}, MCP_GRAPH_AUDIT_LOG_PATH = ${tomlString(auditLogPath)} }`,
+    `env = { MCP_GRAPH_CONFIG_PATH = ${tomlString(backendPath)}, MCP_GRAPH_AUDIT_LOG_PATH = ${tomlString(auditLogPath)}, MCP_GRAPH_POLICY_PATH = ${tomlString(policyPath)} }`,
     '',
   ].join('\n');
   const nextText = `${stripped.trimEnd()}\n\n${block}`.trimStart();
@@ -347,13 +414,19 @@ function stripTomlSections(text: string, sectionRoot: string): string {
   return output.join('\n').replace(/\n{3,}/g, '\n\n');
 }
 
-function createClaudeGraphEntry(graphLaunch: GraphLaunchSpec, backendPath: string, auditLogPath: string): Record<string, unknown> {
+function createClaudeGraphEntry(
+  graphLaunch: GraphLaunchSpec,
+  backendPath: string,
+  auditLogPath: string,
+  policyPath: string,
+): Record<string, unknown> {
   return {
     command: graphLaunch.command,
     args: graphLaunch.args,
     env: {
       MCP_GRAPH_CONFIG_PATH: backendPath,
       MCP_GRAPH_AUDIT_LOG_PATH: auditLogPath,
+      MCP_GRAPH_POLICY_PATH: policyPath,
     },
   };
 }
@@ -371,6 +444,114 @@ function sanitizeOpenCodePermission(permission: unknown): unknown {
     Object.entries(permission as Record<string, unknown>)
       .filter(([key]) => !key.startsWith('mcp__')),
   );
+}
+
+function getClaudeAllowlist(policy: GraphPolicyDocument): string[] {
+  const dynamicBackendAllowlist = Object.entries(policy.servers)
+    .flatMap(([server, entry]) => entry.allowedTools.map((toolName) => `mcp__${server}__${toolName}`))
+    .sort((left, right) => left.localeCompare(right));
+
+  return [
+    ...GRAPH_TOOL_ALLOWLIST,
+    ...dynamicBackendAllowlist,
+  ];
+}
+
+function mergeOpenCodePermission(permission: unknown, policy: GraphPolicyDocument): unknown {
+  const sanitized = sanitizeOpenCodePermission(permission);
+  if (sanitized === undefined || sanitized === null) {
+    const next: Record<string, unknown> = {};
+    for (const pattern of getOpenCodeAllowPatterns(policy)) {
+      next[pattern] = 'allow';
+    }
+    return next;
+  }
+  if (typeof sanitized !== 'object' || Array.isArray(sanitized)) {
+    return sanitized;
+  }
+
+  const next = { ...(sanitized as Record<string, unknown>) };
+  for (const pattern of getOpenCodeAllowPatterns(policy)) {
+    if (!(pattern in next)) {
+      next[pattern] = 'allow';
+    }
+  }
+  return next;
+}
+
+function getOpenCodeAllowPatterns(policy: GraphPolicyDocument): string[] {
+  const patterns = new Set<string>();
+
+  for (const pattern of getOpenCodeServerPatterns('mcp-graph')) {
+    patterns.add(pattern);
+  }
+
+  for (const serverName of Object.keys(policy.servers)) {
+    for (const pattern of getOpenCodeServerPatterns(serverName)) {
+      patterns.add(pattern);
+    }
+  }
+
+  return [...patterns].sort((left, right) => left.localeCompare(right));
+}
+
+function getOpenCodeServerPatterns(serverName: string): string[] {
+  const patterns = new Set<string>();
+  const raw = `${serverName}_*`;
+  patterns.add(raw);
+
+  const normalized = normalizeOpenCodeToolPrefix(serverName);
+  if (normalized) {
+    patterns.add(`${normalized}_*`);
+  }
+
+  return [...patterns];
+}
+
+function normalizeOpenCodeToolPrefix(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+async function readExistingToolPermissionIndex(homeDir: string): Promise<ExistingToolPermissionIndex> {
+  const settingsPath = path.join(homeDir, '.claude', 'settings.json');
+  if (!(await fileExists(settingsPath))) {
+    return {};
+  }
+
+  const settings = await readJsonObjectOrDefault(settingsPath);
+  const permissions = settings.permissions;
+  if (!permissions || typeof permissions !== 'object' || Array.isArray(permissions)) {
+    return {};
+  }
+
+  const allow = Array.isArray((permissions as Record<string, unknown>).allow)
+    ? ((permissions as Record<string, unknown>).allow as unknown[]).filter((entry): entry is string => typeof entry === 'string')
+    : [];
+
+  const index: ExistingToolPermissionIndex = {};
+  for (const entry of allow) {
+    const match = /^mcp__(.+?)__(.+)$/.exec(entry);
+    if (!match) {
+      continue;
+    }
+    const [, server, tool] = match;
+    if (server === 'mcp-graph') {
+      continue;
+    }
+    index[server] ??= [];
+    if (!index[server].includes(tool)) {
+      index[server].push(tool);
+    }
+  }
+
+  for (const toolNames of Object.values(index)) {
+    toolNames.sort((left, right) => left.localeCompare(right));
+  }
+
+  return index;
 }
 
 async function resolveOpenCodeConfigPath(homeDir: string): Promise<string> {

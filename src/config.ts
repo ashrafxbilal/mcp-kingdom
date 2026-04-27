@@ -86,6 +86,10 @@ export async function loadMergedServerConfigs(options: LoadConfigOptions = {}): 
 
 export async function snapshotMergedConfig(options: LoadConfigOptions = {}): Promise<JsonConfigFile> {
   const loaded = await loadMergedServerConfigs(options);
+  return snapshotLoadedConfig(loaded);
+}
+
+export function snapshotLoadedConfig(loaded: LoadedServerConfig): JsonConfigFile {
   const mcpServers: Record<string, unknown> = {};
 
   for (const server of loaded.servers) {
@@ -93,6 +97,18 @@ export async function snapshotMergedConfig(options: LoadConfigOptions = {}): Pro
   }
 
   return { mcpServers };
+}
+
+export function loadExplicitServerMap(
+  serverMap: Record<string, unknown>,
+  filePath: string,
+): LoadedServerConfig {
+  return {
+    servers: normalizeServerMap(serverMap, { kind: 'explicit', filePath })
+      .sort((left, right) => left.name.localeCompare(right.name)),
+    duplicates: [],
+    loadedFiles: [filePath],
+  };
 }
 
 export function getDefaultSourceCandidates({ cwd, homeDir, includeCodex }: { cwd: string; homeDir: string; includeCodex: boolean }): SourceCandidate[] {

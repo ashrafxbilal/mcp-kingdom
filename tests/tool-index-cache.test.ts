@@ -101,4 +101,18 @@ describe('ToolIndexCache', () => {
     expect(result).toBeUndefined();
     await expect(fs.access(filePath)).rejects.toThrow();
   });
+
+  it('invalidates cached files without removing unrelated directory entries', async () => {
+    const cacheDir = await createCacheDir();
+    const cache = new ToolIndexCache({ cacheDir, ttlMs: 60_000 });
+    const server = makeServer();
+
+    await cache.set(server, makeTools());
+    await fs.mkdir(path.join(cacheDir, 'nested-dir'), { recursive: true });
+
+    await cache.invalidate();
+
+    await expect(fs.access(path.join(cacheDir, 'cache-backend.json'))).rejects.toThrow();
+    await expect(fs.access(path.join(cacheDir, 'nested-dir'))).resolves.toBeUndefined();
+  });
 });

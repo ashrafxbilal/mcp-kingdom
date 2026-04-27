@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import { promisify } from 'node:util';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -100,6 +102,49 @@ describe('mcp-graph CLI', () => {
     expect(parsed.serverCount).toBe(1);
     expect(parsed.totalBackendTools).toBe(2);
     expect(parsed.frontDoorToolCount).toBe(GRAPH_TOOL_NAMES.length);
+  });
+
+  it('falls back to the saved backend snapshot when the active configs have already been rewired', async () => {
+    const fixture = await createMockBackendConfig();
+    cleanups.push(fixture.cleanup);
+
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-graph-cli-home-'));
+    cleanups.push(async () => fs.rm(tempHome, { recursive: true, force: true }));
+    await fs.mkdir(path.join(tempHome, '.config', 'opencode'), { recursive: true });
+    await fs.writeFile(
+      path.join(tempHome, '.config', 'opencode', 'opencode.json'),
+      JSON.stringify({
+        mcp: {
+          'mcp-graph': {
+            type: 'local',
+            command: [process.execPath, '/tmp/mcp-graph-cli.js'],
+          },
+        },
+      }, null, 2),
+      'utf8',
+    );
+    await fs.mkdir(path.join(tempHome, '.mcp-graph'), { recursive: true });
+    await fs.copyFile(fixture.backendConfigPath, path.join(tempHome, '.mcp-graph', 'backends.json'));
+
+    const repoRoot = getRepoRoot();
+    const command = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
+    const scriptPath = path.join(repoRoot, 'src', 'cli.ts');
+    const { stdout } = await execFileAsync(command, [scriptPath, 'inspect', '--tool-counts'], {
+      cwd: repoRoot,
+      env: {
+        ...(process.env as Record<string, string | undefined>),
+        HOME: tempHome,
+      } as NodeJS.ProcessEnv,
+    });
+
+    const parsed = JSON.parse(stdout) as {
+      serverCount: number;
+      totalBackendTools: number;
+      loadedFiles: string[];
+    };
+    expect(parsed.serverCount).toBe(1);
+    expect(parsed.totalBackendTools).toBe(2);
+    expect(parsed.loadedFiles).toEqual([path.join(tempHome, '.mcp-graph', 'backends.json')]);
   });
 
   it('returns partial search results and backend errors instead of failing the whole request', async () => {

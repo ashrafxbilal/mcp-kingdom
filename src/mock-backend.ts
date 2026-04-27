@@ -24,6 +24,11 @@ server.registerTool(
   'catalog',
   {
     description: 'Return a nested catalog payload for result-shaping tests.',
+    annotations: {
+      title: 'Catalog',
+      readOnlyHint: true,
+      idempotentHint: true,
+    },
     inputSchema: z.object({
       size: z.number().int().min(1).max(20).optional().default(5),
     }),

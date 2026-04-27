@@ -10,6 +10,7 @@ import type {
   BackendLookupError,
   BatchCallToolParams,
   CallToolParams,
+  GraphPolicyDocument,
   LoadedServerConfig,
   NormalizedServerConfig,
   SearchToolsResult,
@@ -162,7 +163,11 @@ export class GraphRegistry {
   private readonly configByName = new Map<string, NormalizedServerConfig>();
   private readonly toolIndexCache: ToolIndexCache;
 
-  constructor(config: LoadedServerConfig, private readonly logger: AuditLogger) {
+  constructor(
+    config: LoadedServerConfig,
+    private readonly logger: AuditLogger,
+    private readonly policy?: GraphPolicyDocument,
+  ) {
     this.toolIndexCache = new ToolIndexCache({ logger });
     for (const server of config.servers) {
       this.configByName.set(server.name, server);
@@ -187,9 +192,10 @@ export class GraphRegistry {
 
     for (const config of configs) {
       try {
+        const tools = await this.listServerTools(config.name, params.refresh ?? false);
         entries.push({
           server: config,
-          toolCount: (await this.getSession(config.name).listTools(params.refresh ?? false)).length,
+          toolCount: tools.length,
         });
       } catch (error) {
         const backendError = this.createBackendError(config, error);
@@ -215,7 +221,7 @@ export class GraphRegistry {
     for (const config of serverConfigs) {
       let tools: Tool[];
       try {
-        tools = await this.getSession(config.name).listTools(params.refresh ?? false);
+        tools = await this.listServerTools(config.name, params.refresh ?? false);
       } catch (error) {
         const backendError = this.createBackendError(config, error);
         errors.push(backendError);
@@ -264,9 +270,10 @@ export class GraphRegistry {
 
   async getTool(server: string, toolName: string, refresh = false): Promise<{ server: NormalizedServerConfig; tool: Tool }> {
     const config = this.requireServer(server);
-    const tools = await this.getSession(config.name).listTools(refresh);
+    const tools = await this.listServerTools(config.name, refresh);
     const tool = tools.find((entry) => entry.name === toolName);
     if (!tool) {
+      this.assertToolAllowed(config.name, toolName);
       throw new Error(this.buildToolNotFoundMessage(config.name, toolName, tools));
     }
     return { server: config, tool };
@@ -362,7 +369,7 @@ export class GraphRegistry {
   async refresh(server?: string): Promise<{ refreshedServers: string[] }> {
     const configs = this.filterServers(server);
     for (const config of configs) {
-      await this.getSession(config.name).listTools(true);
+      await this.listServerTools(config.name, true);
     }
     return { refreshedServers: configs.map((config) => config.name) };
   }
@@ -397,6 +404,12 @@ export class GraphRegistry {
     const session = new BackendSession(config, this.logger, this.toolIndexCache);
     this.sessions.set(serverName, session);
     return session;
+  }
+
+  async listServerTools(server: string, refresh = false): Promise<Tool[]> {
+    const config = this.requireServer(server);
+    const tools = await this.getSession(config.name).listTools(refresh);
+    return this.applyPolicy(config.name, tools);
   }
 
   private filterServers(server?: string): NormalizedServerConfig[] {
@@ -506,6 +519,30 @@ export class GraphRegistry {
     }
 
     return `Tool ${toolName} not found on server ${serverName}`;
+  }
+
+  private applyPolicy(serverName: string, tools: Tool[]): Tool[] {
+    const serverPolicy = this.policy?.servers?.[serverName];
+    if (!serverPolicy || serverPolicy.mode === 'passthrough') {
+      return tools;
+    }
+
+    const allowed = new Set(serverPolicy.allowedTools);
+    return tools.filter((tool) => allowed.has(tool.name));
+  }
+
+  private assertToolAllowed(serverName: string, toolName: string): void {
+    const serverPolicy = this.policy?.servers?.[serverName];
+    if (!serverPolicy || serverPolicy.mode === 'passthrough') {
+      return;
+    }
+    if (serverPolicy.allowedTools.includes(toolName)) {
+      return;
+    }
+
+    throw new Error(
+      `Tool ${toolName} is not permitted on server ${serverName} by the current mcp-graph policy. Re-run install or refresh the policy to approve newly discovered tools.`,
+    );
   }
 }
 

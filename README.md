@@ -36,10 +36,13 @@ Behind the scenes it can:
 - merge duplicate server definitions with deterministic precedence
 - connect lazily on first use
 - cache backend tool lists in memory and on disk
+- generate a backend tool policy from discovered MCP schemas
+- safely probe read-only backend tools with zero required arguments during install
 - proxy stdio, streamable HTTP, and SSE MCP servers
 - shape large tool results with output modes, field projection, and array limiting
 - snapshot your existing MCP inventory into a dedicated backend config file
 - rewrite supported client configs so they load only `mcp-graph`
+- update client-native allowlists where the client actually supports them
 - back up rewritten client config files before changing them
 - expose inventory counts so you can verify how much tool surface moved behind the gateway
 
@@ -96,6 +99,8 @@ This install command:
 
 - discovers your existing MCPs from supported configs
 - writes `~/.mcp-graph/backends.json`
+- writes `~/.mcp-graph/policy.json`
+- performs backend verification with `tools/list` and safe read-only probes when available
 - backs up and rewrites supported client configs so they point only to this local `mcp-graph` checkout
 
 Supported install targets:
@@ -135,7 +140,8 @@ Example `~/.claude.json` entry:
       "args": ["/absolute/path/to/mcp-graph/dist/cli.js"],
       "env": {
         "MCP_GRAPH_CONFIG_PATH": "/Users/your-user/.mcp-graph/backends.json",
-        "MCP_GRAPH_AUDIT_LOG_PATH": "/Users/your-user/.mcp-graph/audit.log"
+        "MCP_GRAPH_AUDIT_LOG_PATH": "/Users/your-user/.mcp-graph/audit.log",
+        "MCP_GRAPH_POLICY_PATH": "/Users/your-user/.mcp-graph/policy.json"
       }
     }
   }
@@ -162,10 +168,12 @@ Example `~/.codex/config.toml` snippet:
 [mcp_servers.mcp-graph]
 command = "/absolute/path/to/node"
 args = ["/absolute/path/to/mcp-graph/dist/cli.js"]
-env = { MCP_GRAPH_CONFIG_PATH = "/Users/your-user/.mcp-graph/backends.json", MCP_GRAPH_AUDIT_LOG_PATH = "/Users/your-user/.mcp-graph/audit.log" }
+env = { MCP_GRAPH_CONFIG_PATH = "/Users/your-user/.mcp-graph/backends.json", MCP_GRAPH_AUDIT_LOG_PATH = "/Users/your-user/.mcp-graph/audit.log", MCP_GRAPH_POLICY_PATH = "/Users/your-user/.mcp-graph/policy.json" }
 ```
 
 As with Claude, the token benefit comes only if `mcp-graph` is the primary active MCP surface.
+
+Codex does not currently expose a client-side per-MCP tool allowlist in `config.toml`. `mcp-graph` therefore uses the generated runtime policy file as the effective backend allowlist for Codex installs.
 
 ## OpenCode Integration
 
@@ -181,7 +189,8 @@ OpenCode can load `mcp-graph` as a local MCP server:
       "enabled": true,
       "environment": {
         "MCP_GRAPH_CONFIG_PATH": "/Users/your-user/.mcp-graph/backends.json",
-        "MCP_GRAPH_AUDIT_LOG_PATH": "/Users/your-user/.mcp-graph/audit.log"
+        "MCP_GRAPH_AUDIT_LOG_PATH": "/Users/your-user/.mcp-graph/audit.log",
+        "MCP_GRAPH_POLICY_PATH": "/Users/your-user/.mcp-graph/policy.json"
       }
     }
   }
@@ -218,6 +227,8 @@ With backend tool counts:
 node dist/cli.js inspect --tool-counts
 ```
 
+After `install`, `inspect` automatically falls back to `~/.mcp-graph/backends.json` when your active client configs contain only `mcp-graph`.
+
 ### Install and rewrite supported clients
 
 ```sh
@@ -229,6 +240,9 @@ Options:
 - `--targets claude,codex,opencode`
 - `--backend /custom/path/backends.json`
 - `--audit-log /custom/path/audit.log`
+- `--policy /custom/path/policy.json`
+- `--strict-verify`
+- `--verify-timeout-ms 8000`
 - `--dry-run`
 
 ## Environment Variables
@@ -238,6 +252,7 @@ Options:
 - `MCP_GRAPH_INCLUDE_DISABLED_OPENCODE`: set to `true` to include OpenCode MCP entries with `enabled: false`.
 - `MCP_GRAPH_EXCLUDE_SERVERS`: comma-separated server names to ignore.
 - `MCP_GRAPH_AUDIT_LOG_PATH`: optional JSONL audit log path.
+- `MCP_GRAPH_POLICY_PATH`: explicit backend policy file. Defaults to `~/.mcp-graph/policy.json`.
 - `MCP_GRAPH_CACHE_DIR`: override the persistent tool-index cache directory.
 - `MCP_GRAPH_TOOL_CACHE_TTL_MS`: set the on-disk tool cache TTL in milliseconds.
 

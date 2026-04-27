@@ -85,6 +85,7 @@ describe('installMcpGraph', () => {
       cwd: projectDir,
       homeDir,
       backendPath: path.join(homeDir, '.mcp-graph', 'backends.json'),
+      policyPath: path.join(homeDir, '.mcp-graph', 'policy.json'),
       auditLogPath: path.join(homeDir, '.mcp-graph', 'audit.log'),
       targets: ['claude', 'codex', 'opencode'],
     });
@@ -92,11 +93,25 @@ describe('installMcpGraph', () => {
     expect(result.backendServerCount).toBe(4);
     expect(result.targets).toEqual(['claude', 'codex', 'opencode']);
     expect(result.backups.length).toBeGreaterThan(0);
+    expect(result.policyPath).toBe(path.join(homeDir, '.mcp-graph', 'policy.json'));
+    expect(result.policySummary.totalServers).toBe(4);
 
     const snapshot = JSON.parse(await fs.readFile(path.join(homeDir, '.mcp-graph', 'backends.json'), 'utf8')) as {
       mcpServers: Record<string, unknown>;
     };
     expect(Object.keys(snapshot.mcpServers).sort()).toEqual([
+      'old-claude',
+      'old-codex',
+      'old-opencode',
+      'project-backend',
+    ]);
+
+    const policy = JSON.parse(await fs.readFile(path.join(homeDir, '.mcp-graph', 'policy.json'), 'utf8')) as {
+      summary: { totalServers: number };
+      servers: Record<string, { mode: string }>;
+    };
+    expect(policy.summary.totalServers).toBe(4);
+    expect(Object.keys(policy.servers).sort()).toEqual([
       'old-claude',
       'old-codex',
       'old-opencode',
@@ -122,11 +137,14 @@ describe('installMcpGraph', () => {
     expect(opencode.mcp['mcp-graph']?.command[1]).toMatch(/src\/cli\.ts$/);
     expect(opencode.permission.read).toBe('allow');
     expect(Object.keys(opencode.permission)).not.toContain('mcp__old-opencode__list');
+    expect(opencode.permission['mcp-graph_*']).toBe('allow');
+    expect(opencode.permission['mcp_graph_*']).toBe('allow');
 
     const codex = await fs.readFile(path.join(homeDir, '.codex', 'config.toml'), 'utf8');
     expect(codex).toContain('[mcp_servers.mcp-graph]');
     expect(codex).not.toContain('[mcp_servers.old-codex]');
     expect(codex).not.toContain('command = "npx"');
+    expect(codex).toContain('MCP_GRAPH_POLICY_PATH');
   });
 
   it('supports dry-run without mutating files', async () => {
@@ -148,11 +166,61 @@ describe('installMcpGraph', () => {
       cwd: projectDir,
       homeDir,
       backendPath: path.join(homeDir, '.mcp-graph', 'backends.json'),
+      policyPath: path.join(homeDir, '.mcp-graph', 'policy.json'),
       targets: ['claude'],
       dryRun: true,
     });
 
     expect(result.changedFiles).toContain(path.join(homeDir, '.claude', 'settings.json'));
+    expect(result.changedFiles).toContain(path.join(homeDir, '.mcp-graph', 'policy.json'));
     await expect(fs.access(path.join(homeDir, '.mcp-graph', 'backends.json'))).rejects.toThrow();
+  });
+
+  it('builds policy entries for preserved backends that already exist in the snapshot', async () => {
+    const { homeDir, projectDir } = await createFixtureRoot();
+
+    await fs.writeFile(
+      path.join(projectDir, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          'project-backend': {
+            command: 'project-backend',
+          },
+        },
+      }, null, 2),
+      'utf8',
+    );
+
+    await fs.mkdir(path.join(homeDir, '.mcp-graph'), { recursive: true });
+    await fs.writeFile(
+      path.join(homeDir, '.mcp-graph', 'backends.json'),
+      JSON.stringify({
+        mcpServers: {
+          'preserved-backend': {
+            command: 'preserved-backend',
+          },
+        },
+      }, null, 2),
+      'utf8',
+    );
+
+    const result = await installMcpGraph({
+      cwd: projectDir,
+      homeDir,
+      backendPath: path.join(homeDir, '.mcp-graph', 'backends.json'),
+      policyPath: path.join(homeDir, '.mcp-graph', 'policy.json'),
+      targets: ['claude'],
+    });
+
+    expect(result.backendServerCount).toBe(2);
+    expect(result.policySummary.totalServers).toBe(2);
+
+    const policy = JSON.parse(await fs.readFile(path.join(homeDir, '.mcp-graph', 'policy.json'), 'utf8')) as {
+      servers: Record<string, { mode: string }>;
+    };
+    expect(Object.keys(policy.servers).sort()).toEqual([
+      'preserved-backend',
+      'project-backend',
+    ]);
   });
 });

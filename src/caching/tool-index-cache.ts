@@ -104,7 +104,12 @@ export class ToolIndexCache {
     }
 
     if (await fileExists(this.cacheDir)) {
-      await fs.rm(this.cacheDir, { recursive: true, force: true });
+      for (const entry of await fs.readdir(this.cacheDir, { withFileTypes: true })) {
+        if (!entry.isFile()) {
+          continue;
+        }
+        await fs.rm(path.join(this.cacheDir, entry.name), { force: true });
+      }
     }
     await this.logger?.log('tool_cache_invalidate', {
       scope: 'all',
