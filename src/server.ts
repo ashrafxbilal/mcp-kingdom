@@ -43,13 +43,14 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
     },
     async ({ includeMetadata, includeDuplicates, includeToolCounts, refresh }) => {
       const inventory = await registry.getServerInventory({ includeToolCounts, refresh });
-      const servers = inventory.entries.map(({ server: entry, toolCount, error }) => ({
+      const servers = inventory.entries.map(({ server: entry, toolCount, error, connection }) => ({
         name: entry.name,
         transport: entry.transport,
         sourceKind: entry.sourceKind,
         sourceFile: entry.sourceFile,
         ...(includeMetadata ? { metadata: entry.metadata ?? {} } : {}),
         ...(includeToolCounts ? { toolCount } : {}),
+        ...(connection ? { connection } : {}),
         ...(policy?.servers?.[entry.name]
           ? {
             policyMode: policy.servers[entry.name].mode,
@@ -64,7 +65,8 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
         ...servers.map((entry) => {
           const toolCountText = includeToolCounts && entry.toolCount !== undefined ? ` (${entry.toolCount} tools)` : '';
           const errorText = entry.error ? ` [error: ${entry.error}]` : '';
-          return `- ${entry.name} [${entry.transport}] from ${entry.sourceFile}${toolCountText}${errorText}`;
+          const strategyText = entry.connection?.selectedStrategy ? ` via ${entry.connection.selectedStrategy}` : '';
+          return `- ${entry.name} [${entry.transport}] from ${entry.sourceFile}${toolCountText}${strategyText}${errorText}`;
         }),
       ];
       if (inventory.errors.length > 0) {

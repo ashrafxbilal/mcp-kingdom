@@ -11,6 +11,7 @@ export type SourceKind =
   | 'codex-toml';
 
 export type GraphTransport = 'stdio' | 'streamable-http' | 'sse';
+export type GraphAuthMode = 'none' | 'static-headers' | 'oauth-browser';
 
 export interface NormalizedServerConfig {
   name: string;
@@ -44,6 +45,24 @@ export interface ExistingToolPermissionIndex {
   [serverName: string]: string[];
 }
 
+export interface ConnectionAttemptReport {
+  strategy: string;
+  transport: GraphTransport;
+  url?: string;
+  authMode: GraphAuthMode;
+  ok: boolean;
+  error?: string;
+}
+
+export interface ConnectionResolution {
+  selectedStrategy?: string;
+  effectiveTransport?: GraphTransport;
+  effectiveUrl?: string;
+  authMode: GraphAuthMode;
+  attempts: ConnectionAttemptReport[];
+  remediation: string[];
+}
+
 export interface ToolMatch {
   server: string;
   tool: Tool;
@@ -65,6 +84,7 @@ export interface ServerInventoryEntry {
   server: NormalizedServerConfig;
   toolCount?: number;
   error?: string;
+  connection?: ConnectionResolution;
 }
 
 export interface ServerInventoryResult {
@@ -125,6 +145,13 @@ export interface GraphPolicyServerEntry {
   error?: string;
   fallbackSource?: 'existing-policy' | 'legacy-client-allowlist';
   probe?: GraphPolicyProbeResult;
+  resolution?: {
+    selectedStrategy?: string;
+    effectiveTransport?: GraphTransport;
+    effectiveUrl?: string;
+    authMode?: GraphAuthMode;
+  };
+  remediation?: string[];
 }
 
 export interface GraphPolicySummary {

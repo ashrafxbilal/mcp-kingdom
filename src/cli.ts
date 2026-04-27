@@ -6,6 +6,7 @@ import { loadMergedServerConfigs, snapshotMergedConfig } from './config.js';
 import { GraphRegistry } from './clients.js';
 import { installMcpGraph, type InstallTarget } from './install.js';
 import { AuditLogger } from './logger.js';
+import { authLogin } from './oauth.js';
 import { loadGraphPolicy } from './policy.js';
 import { ensureDir, fileExists, safeJsonStringify } from './utils.js';
 import { runGraphServer } from './server.js';
@@ -25,6 +26,9 @@ async function main(): Promise<void> {
       return;
     case 'install':
       await handleInstall(args);
+      return;
+    case 'auth':
+      await handleAuth(args);
       return;
     case 'help':
     case '--help':
@@ -64,6 +68,7 @@ async function handleInspect(args: string[]): Promise<void> {
       ...(includeToolCounts ? {
         toolCount: inventory?.entries.find((item) => item.server.name === entry.name)?.toolCount ?? 0,
         error: inventory?.entries.find((item) => item.server.name === entry.name)?.error,
+        connection: inventory?.entries.find((item) => item.server.name === entry.name)?.connection,
         policyMode: policy?.servers?.[entry.name]?.mode,
         allowedToolCount: policy?.servers?.[entry.name]?.allowedTools.length,
       } : {}),
@@ -124,6 +129,22 @@ async function handleInstall(args: string[]): Promise<void> {
   process.stdout.write(`${safeJsonStringify(result, 2)}\n`);
 }
 
+async function handleAuth(args: string[]): Promise<void> {
+  const [subcommand, ...rest] = args;
+  if (subcommand !== 'login') {
+    throw new Error(`Unknown auth command: ${subcommand ?? '(missing)'}`);
+  }
+
+  const server = readFlag(rest, '--server');
+  if (!server) {
+    throw new Error('Missing value for --server');
+  }
+
+  const config = await loadInspectConfig(rest);
+  const result = await authLogin(config, server);
+  process.stdout.write(`${safeJsonStringify(result, 2)}\n`);
+}
+
 function readFlag(args: string[], flag: string): string | undefined {
   const index = args.findIndex((arg) => arg === flag);
   if (index === -1) {
@@ -151,7 +172,7 @@ function parseTargets(value?: string): InstallTarget[] | undefined {
 }
 
 function printHelp(): void {
-  process.stdout.write(`mcp-graph\n\nCommands:\n  serve               Run the MCP server over stdio (default)\n  snapshot            Merge discovered MCP configs and write a backend snapshot file\n  inspect             Print the merged server inventory and duplicate resolution\n  install             Snapshot backend MCPs, generate policy, and rewire Claude/Codex/OpenCode to use only mcp-graph\n\nExamples:\n  node dist/cli.js snapshot --output ~/.mcp-graph/backends.json\n  node dist/cli.js inspect --tool-counts\n  node dist/cli.js inspect --backend ~/.mcp-graph/backends.json --tool-counts\n  node dist/cli.js install\n  node dist/cli.js install --targets claude,codex,opencode --strict-verify\n  node dist/cli.js install --policy ~/.mcp-graph/policy.json --verify-timeout-ms ${DEFAULT_VERIFY_TIMEOUT_MS}\n  MCP_GRAPH_CONFIG_PATH=~/.mcp-graph/backends.json node dist/cli.js\n`);
+  process.stdout.write(`mcp-graph\n\nCommands:\n  serve               Run the MCP server over stdio (default)\n  snapshot            Merge discovered MCP configs and write a backend snapshot file\n  inspect             Print the merged server inventory and duplicate resolution\n  install             Snapshot backend MCPs, generate policy, and rewire Claude/Codex/OpenCode to use only mcp-graph\n  auth login          Bootstrap OAuth tokens for an auth-gated backend server\n\nExamples:\n  node dist/cli.js snapshot --output ~/.mcp-graph/backends.json\n  node dist/cli.js inspect --tool-counts\n  node dist/cli.js inspect --backend ~/.mcp-graph/backends.json --tool-counts\n  node dist/cli.js install\n  node dist/cli.js install --targets claude,codex,opencode --strict-verify\n  node dist/cli.js install --policy ~/.mcp-graph/policy.json --verify-timeout-ms ${DEFAULT_VERIFY_TIMEOUT_MS}\n  node dist/cli.js auth login --server slack\n  MCP_GRAPH_CONFIG_PATH=~/.mcp-graph/backends.json node dist/cli.js\n`);
 }
 
 main().catch((error) => {

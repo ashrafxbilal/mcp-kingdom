@@ -4,12 +4,15 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { ToolIndexCache } from './caching/tool-index-cache.js';
+import { buildConnectionPlans, createResolution } from './connection-resolver.js';
 import { renderToolResult, type GraphToolResult } from './formatting/result-shaper.js';
 import { AuditLogger } from './logger.js';
+import { createOAuthProvider } from './oauth.js';
 import type {
   BackendLookupError,
   BatchCallToolParams,
   CallToolParams,
+  ConnectionResolution,
   GraphPolicyDocument,
   LoadedServerConfig,
   NormalizedServerConfig,
@@ -31,6 +34,7 @@ class BackendSession {
   private transport?: StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport;
   private connectPromise?: Promise<Client>;
   private toolCache?: ToolCacheRecord;
+  private connectionResolution?: ConnectionResolution;
 
   constructor(
     readonly config: NormalizedServerConfig,
@@ -105,29 +109,73 @@ class BackendSession {
     this.toolCache = undefined;
   }
 
-  private async connectInternal(): Promise<Client> {
-    const client = new Client(
-      { name: 'mcp-graph-backend-client', version: MCP_GRAPH_VERSION },
-      { capabilities: {} },
-    );
-    const transport = this.createTransport();
-    await client.connect(transport);
-
-    this.client = client;
-    this.transport = transport;
-
-    await this.logger.log('backend_connected', {
-      server: this.config.name,
-      sourceKind: this.config.sourceKind,
-      transport: this.config.transport,
-      sourceFile: this.config.sourceFile,
-    });
-
-    return client;
+  getConnectionResolution(): ConnectionResolution | undefined {
+    return this.connectionResolution;
   }
 
-  private createTransport(): StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport {
-    if (this.config.transport === 'stdio') {
+  private async connectInternal(): Promise<Client> {
+    const authProvider = createOAuthProvider(this.config);
+    const attempts = [];
+    let lastError: unknown;
+
+    for (const plan of buildConnectionPlans(this.config)) {
+      const client = new Client(
+        { name: 'mcp-graph-backend-client', version: MCP_GRAPH_VERSION },
+        { capabilities: {} },
+      );
+      const transport = this.createTransport(plan, authProvider);
+
+      try {
+        await client.connect(transport);
+        this.client = client;
+        this.transport = transport;
+        const selectedAttempt = {
+          strategy: plan.strategy,
+          transport: plan.transport,
+          url: plan.url,
+          authMode: plan.authMode,
+          ok: true,
+        } as const;
+        attempts.push(selectedAttempt);
+        this.connectionResolution = createResolution({
+          plans: attempts,
+          selected: selectedAttempt,
+        });
+
+        await this.logger.log('backend_connected', {
+          server: this.config.name,
+          sourceKind: this.config.sourceKind,
+          transport: plan.transport,
+          strategy: plan.strategy,
+          sourceFile: this.config.sourceFile,
+          url: plan.url,
+        });
+
+        return client;
+      } catch (error) {
+        lastError = error;
+        attempts.push({
+          strategy: plan.strategy,
+          transport: plan.transport,
+          url: plan.url,
+          authMode: plan.authMode,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        await transport.close().catch(() => undefined);
+        await client.close().catch(() => undefined);
+      }
+    }
+
+    this.connectionResolution = createResolution({ plans: attempts });
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
+  private createTransport(
+    plan: ReturnType<typeof buildConnectionPlans>[number],
+    authProvider = createOAuthProvider(this.config),
+  ): StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport {
+    if (plan.transport === 'stdio') {
       if (!this.config.command) {
         throw new Error(`Missing command for stdio server ${this.config.name}`);
       }
@@ -144,16 +192,18 @@ class BackendSession {
       throw new Error(`Missing URL for remote server ${this.config.name}`);
     }
 
-    const url = new URL(this.config.url);
-    if (this.config.transport === 'sse') {
+    const url = new URL(plan.url ?? this.config.url);
+    if (plan.transport === 'sse') {
       return new SSEClientTransport(url, {
-        requestInit: { headers: this.config.headers },
-        eventSourceInit: { fetch: globalThis.fetch as typeof fetch, headers: this.config.headers } as never,
+        ...(authProvider ? { authProvider } : {}),
+        requestInit: { headers: plan.headers ?? this.config.headers },
+        eventSourceInit: { fetch: globalThis.fetch as typeof fetch, headers: plan.headers ?? this.config.headers } as never,
       });
     }
 
     return new StreamableHTTPClientTransport(url, {
-      requestInit: { headers: this.config.headers },
+      ...(authProvider ? { authProvider } : {}),
+      requestInit: { headers: plan.headers ?? this.config.headers },
     });
   }
 }
@@ -191,11 +241,13 @@ export class GraphRegistry {
     const errors: BackendLookupError[] = [];
 
     for (const config of configs) {
+      const session = this.getSession(config.name);
       try {
-        const tools = await this.listServerTools(config.name, params.refresh ?? false);
+        const tools = await session.listTools(params.refresh ?? false);
         entries.push({
           server: config,
           toolCount: tools.length,
+          connection: session.getConnectionResolution(),
         });
       } catch (error) {
         const backendError = this.createBackendError(config, error);
@@ -203,6 +255,7 @@ export class GraphRegistry {
         entries.push({
           server: config,
           error: backendError.message,
+          connection: session.getConnectionResolution(),
         });
         await this.logger.log('backend_inventory_error', { ...backendError });
       }
@@ -410,6 +463,10 @@ export class GraphRegistry {
     const config = this.requireServer(server);
     const tools = await this.getSession(config.name).listTools(refresh);
     return this.applyPolicy(config.name, tools);
+  }
+
+  getServerConnectionResolution(server: string): ConnectionResolution | undefined {
+    return this.getSession(this.requireServer(server).name).getConnectionResolution();
   }
 
   private filterServers(server?: string): NormalizedServerConfig[] {

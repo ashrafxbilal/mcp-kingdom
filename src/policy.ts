@@ -33,7 +33,7 @@ export async function buildGraphPolicy(
     for (const config of loadedConfig.servers) {
       try {
         const tools = await withTimeout(
-          registry.listServerTools(config.name),
+          registry.listServerTools(config.name, true),
           verifyTimeoutMs,
           `Tool discovery for ${config.name}`,
         );
@@ -53,8 +53,15 @@ export async function buildGraphPolicy(
           transport: config.transport,
           toolCount: allowedTools.length,
           probe,
+          ...(registry.getServerConnectionResolution(config.name)
+            ? {
+              resolution: toPolicyResolution(registry.getServerConnectionResolution(config.name)),
+              remediation: registry.getServerConnectionResolution(config.name)?.remediation,
+            }
+            : {}),
         };
       } catch (error) {
+        const resolution = registry.getServerConnectionResolution(config.name);
         const fallback = getFallbackTools(config.name, options.existingPolicy, options.knownAllowedTools);
         servers[config.name] = {
           mode: fallback.tools.length > 0 ? 'allow-listed' : 'passthrough',
@@ -68,6 +75,10 @@ export async function buildGraphPolicy(
             status: 'skipped',
             reason: 'Tool discovery failed before safe probe',
           },
+          ...(resolution ? {
+            resolution: toPolicyResolution(resolution),
+            remediation: resolution.remediation,
+          } : {}),
         };
       }
     }
@@ -93,6 +104,18 @@ export async function buildGraphPolicy(
     verificationMode: probeReadOnlyTools ? 'inventory-and-safe-probe' : 'inventory-only',
     servers,
     summary,
+  };
+}
+
+function toPolicyResolution(resolution?: ReturnType<GraphRegistry['getServerConnectionResolution']>): GraphPolicyServerEntry['resolution'] | undefined {
+  if (!resolution) {
+    return undefined;
+  }
+  return {
+    selectedStrategy: resolution.selectedStrategy,
+    effectiveTransport: resolution.effectiveTransport,
+    effectiveUrl: resolution.effectiveUrl,
+    authMode: resolution.authMode,
   };
 }
 

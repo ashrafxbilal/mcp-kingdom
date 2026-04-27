@@ -8,14 +8,15 @@
 - generates a runtime policy from discovered backend tool lists
 - proxies tool calls to those backends
 - caches tool metadata
+- retries known transport variants for misconfigured remote MCP endpoints
 - rewrites local client configs so the gateway is the only active front door
 - optionally writes audit logs for gateway activity
+- can persist OAuth client state for auth-gated remote backends
 
 ## What It Does Not Do
 
 - sandbox backend MCP execution
 - inspect or filter backend tool side effects
-- negotiate interactive auth flows beyond static headers already present in config
 - reduce the privileges of the original backend commands
 
 If a backend MCP runs a local binary with full user privileges, that trust boundary is unchanged after you put it behind `mcp-graph`.
@@ -24,6 +25,7 @@ If a backend MCP runs a local binary with full user privileges, that trust bound
 
 - `stdio` backends still run as local child processes
 - remote MCPs still receive requests with whatever static headers were configured
+- auth-gated remote MCPs can require a separate `auth login` bootstrap step before they become usable through the gateway
 - the generated policy can stop newly added backend tools from appearing until you refresh or reinstall
 - if a backend could not be enumerated during install, `mcp-graph` can intentionally fall back to passthrough mode for that server to avoid breaking existing workflows
 - the gateway still only reduces schema exposure and context growth; it does not change the security posture of the underlying tools

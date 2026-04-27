@@ -49,6 +49,7 @@ After `node dist/cli.js install --targets opencode`:
 - your active OpenCode config should contain only one enabled MCP entry: `mcp-graph`
 - your previous OpenCode MCP servers should be preserved in `~/.mcp-graph/backends.json`
 - your backend tool policy should exist in `~/.mcp-graph/policy.json`
+- auth state for OAuth-gated backends will be stored in `~/.mcp-graph/auth`
 - OpenCode should launch `mcp-graph` from your local clone by absolute path
 - OpenCode should not contain Claude-style permission keys like `mcp__server__tool`
 
@@ -118,6 +119,13 @@ What this proves:
 - after `install`, `inspect` automatically uses `~/.mcp-graph/backends.json` when your client configs have already been rewired to only `mcp-graph`
 - `inspect --tool-counts` forces `mcp-graph` to fetch `tools/list` from each backend and count the tools
 - `~/.mcp-graph/policy.json` records which servers were allow-listed, which fell back to passthrough, and whether a safe read-only probe succeeded
+- the inspect output also shows the selected connection strategy and remediation for transport/auth failures
+
+For Slack or other OAuth-gated MCPs:
+
+```sh
+node dist/cli.js auth login --server slack
+```
 
 That second command is the fastest broad verification that backend MCP discovery is still working after the OpenCode rewrite.
 

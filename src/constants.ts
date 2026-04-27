@@ -6,6 +6,7 @@ export const DEFAULT_BACKEND_SNAPSHOT = path.join(DEFAULT_GRAPH_HOME, 'backends.
 export const DEFAULT_AUDIT_LOG_PATH = path.join(DEFAULT_GRAPH_HOME, 'audit.log');
 export const DEFAULT_POLICY_PATH = path.join(DEFAULT_GRAPH_HOME, 'policy.json');
 export const DEFAULT_CACHE_DIR = path.join(DEFAULT_GRAPH_HOME, 'cache');
+export const DEFAULT_AUTH_DIR = path.join(DEFAULT_GRAPH_HOME, 'auth');
 export const DEFAULT_TOOL_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 export const DEFAULT_VERIFY_TIMEOUT_MS = 1000 * 8;
 

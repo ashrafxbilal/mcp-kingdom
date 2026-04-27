@@ -37,6 +37,8 @@ Behind the scenes it can:
 - connect lazily on first use
 - cache backend tool lists in memory and on disk
 - generate a backend tool policy from discovered MCP schemas
+- adapt known transport mismatches like Coralogix-style `type: "sse"` configs that really speak streamable HTTP
+- preserve auth-gated backends behind `mcp-graph` and expose an OAuth bootstrap command for them
 - safely probe read-only backend tools with zero required arguments during install
 - proxy stdio, streamable HTTP, and SSE MCP servers
 - shape large tool results with output modes, field projection, and array limiting
@@ -229,6 +231,15 @@ node dist/cli.js inspect --tool-counts
 
 After `install`, `inspect` automatically falls back to `~/.mcp-graph/backends.json` when your active client configs contain only `mcp-graph`.
 
+`inspect --tool-counts` now includes per-server connection details such as the selected fallback strategy, effective transport, and remediation for auth-gated or unavailable servers.
+
+For auth-gated backends such as Slack or Spinnaker:
+
+```sh
+node dist/cli.js auth login --server slack
+node dist/cli.js auth login --server remote-spinnaker-mcp-server
+```
+
 ### Install and rewrite supported clients
 
 ```sh
@@ -253,6 +264,7 @@ Options:
 - `MCP_GRAPH_EXCLUDE_SERVERS`: comma-separated server names to ignore.
 - `MCP_GRAPH_AUDIT_LOG_PATH`: optional JSONL audit log path.
 - `MCP_GRAPH_POLICY_PATH`: explicit backend policy file. Defaults to `~/.mcp-graph/policy.json`.
+- `MCP_GRAPH_AUTH_DIR`: persisted OAuth state used by `auth login`. Defaults to `~/.mcp-graph/auth`.
 - `MCP_GRAPH_CACHE_DIR`: override the persistent tool-index cache directory.
 - `MCP_GRAPH_TOOL_CACHE_TTL_MS`: set the on-disk tool cache TTL in milliseconds.
 

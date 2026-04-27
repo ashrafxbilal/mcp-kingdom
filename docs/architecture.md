@@ -73,6 +73,8 @@ The generated policy is conservative:
 - if a backend can be enumerated, its discovered tool list becomes the allow-listed runtime surface
 - if a safe read-only tool with zero required arguments exists, the installer probes it and records the result
 - if a backend cannot be enumerated, the policy falls back to passthrough mode for that server unless you install with `--strict-verify`
+- connection resolution is dynamic: `mcp-graph` can retry known transport variants and record the selected strategy in policy/inspect output
+- OAuth-gated backends stay behind `mcp-graph`; bootstrap their tokens with `node dist/cli.js auth login --server <name>`
 
 Backups are created before overwriting existing client config files.
 
