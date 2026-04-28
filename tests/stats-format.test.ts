@@ -125,4 +125,75 @@ describe('stats formatting', () => {
     expect(text).toContain('$0.375');
     expect(text).toContain('8.50K');
   });
+
+  it('adds ANSI colors only when explicitly enabled', () => {
+    const text = formatClaudeStatsReport({
+      rootDir: '/tmp/.claude/projects',
+      timezone: 'UTC',
+      targetDate: '2026-04-28',
+      compareDays: 0,
+      logFileCount: 1,
+      targetDay: {
+        date: '2026-04-28',
+        messages: 1,
+        sessions: 1,
+        input: 10,
+        output: 20,
+        cacheRead: 30,
+        cacheWrite: 40,
+        fresh: 30,
+        total: 100,
+      },
+      dailyBreakdown: [
+        { date: '2026-04-28', messages: 1, sessions: 1, input: 10, output: 20, cacheRead: 30, cacheWrite: 40, fresh: 30, total: 100 },
+      ],
+    }, { color: true });
+
+    expect(text).toContain('\u001B[');
+  });
+
+  it('lets FORCE_COLOR override NO_COLOR', () => {
+    const previousForce = process.env.FORCE_COLOR;
+    const previousNoColor = process.env.NO_COLOR;
+    process.env.FORCE_COLOR = '1';
+    process.env.NO_COLOR = '1';
+
+    try {
+      const text = formatClaudeStatsReport({
+        rootDir: '/tmp/.claude/projects',
+        timezone: 'UTC',
+        targetDate: '2026-04-28',
+        compareDays: 0,
+        logFileCount: 1,
+        targetDay: {
+          date: '2026-04-28',
+          messages: 1,
+          sessions: 1,
+          input: 10,
+          output: 20,
+          cacheRead: 30,
+          cacheWrite: 40,
+          fresh: 30,
+          total: 100,
+        },
+        dailyBreakdown: [
+          { date: '2026-04-28', messages: 1, sessions: 1, input: 10, output: 20, cacheRead: 30, cacheWrite: 40, fresh: 30, total: 100 },
+        ],
+      });
+
+      expect(text).toContain('\u001B[');
+    } finally {
+      if (previousForce === undefined) {
+        delete process.env.FORCE_COLOR;
+      } else {
+        process.env.FORCE_COLOR = previousForce;
+      }
+
+      if (previousNoColor === undefined) {
+        delete process.env.NO_COLOR;
+      } else {
+        process.env.NO_COLOR = previousNoColor;
+      }
+    }
+  });
 });

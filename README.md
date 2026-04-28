@@ -304,6 +304,8 @@ By default this prints a human-readable ASCII graph view. For raw JSON:
 npm run claude-stats -- --json
 ```
 
+When stdout is a TTY, the graph view is colorized. When output is piped or redirected, it stays plain ASCII.
+
 Compare a specific day against the previous week:
 
 ```sh
@@ -339,6 +341,51 @@ By default this prints a human-readable ASCII graph view. For raw JSON:
 ```sh
 npm run opencode-stats -- --json
 ```
+
+When stdout is a TTY, the graph view is colorized. When output is piped or redirected, it stays plain ASCII.
+
+## Measuring Savings Deterministically
+
+The most reliable way to prove `mcp-kingdom` reduces token usage is to compare startup overhead for the exact same prompt with and without the gateway.
+
+Use this protocol:
+
+1. Pick a disposable directory with no extra repo instructions.
+2. Use the same model for every run.
+3. Start a fresh client session each time.
+4. Use the exact same prompt, for example: `Reply with OK only.`
+5. Compare the first assistant turn only.
+
+For Claude Code, the cleanest metric is the first-turn `cache_creation_input_tokens`. That number captures how much hidden startup prompt/context Claude had to build before your prompt really started.
+
+Deterministic A/B:
+
+1. Baseline config: direct MCPs enabled, `mcp-kingdom` disabled.
+2. Gateway config: only `mcp-kingdom` enabled.
+3. Run the same one-turn prompt 5 times in each config.
+4. Compare the median first-turn startup tokens.
+
+Interpretation:
+
+- lower `cache_creation_input_tokens` on the first turn means lower startup prompt mass
+- lower first-turn `total` or `fresh` tokens means the client paid less to begin the session
+- for prompts that never touch most MCPs, `mcp-kingdom` should win clearly
+- for prompts that eventually fan into many backend MCPs, the gap will shrink
+
+What to compare:
+
+- Claude:
+  - first-turn `cache_creation_input_tokens`
+  - first-turn `total = input + output + cache read + cache creation`
+- OpenCode:
+  - one-turn session token delta from the DB for the same prompt
+
+Important:
+
+- compare medians, not a single run
+- do not compare across different repos/models/prompts
+- do not use long multi-turn sessions for this benchmark
+- do not rely only on daily totals; use controlled one-turn sessions
 
 Compare a specific day:
 
