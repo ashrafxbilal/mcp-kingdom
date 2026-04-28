@@ -62,6 +62,65 @@ Recommended install model:
 
 This gives you token savings without depending on any external code-executor repo.
 
+### Flow Diagram
+
+```mermaid
+flowchart TD
+    A["User runs doctor / install / rediscover"] --> B["Config discovery"]
+    B --> B1["Project .mcp.json / opencode.json"]
+    B --> B2["~/.claude/settings.json"]
+    B --> B3["~/.claude/mcp.json and ~/.claude.json"]
+    B --> B4["~/.codex/config.toml"]
+    B --> B5["~/.config/opencode/opencode.json"]
+    B1 --> C["Merged backend inventory"]
+    B2 --> C
+    B3 --> C
+    B4 --> C
+    B5 --> C
+    C --> D["Alias dedupe after live verification"]
+    D --> E["Write ~/.mcp-kingdom/backends.json"]
+    D --> F["Build ~/.mcp-kingdom/policy.json"]
+    F --> F1["tools/list on each backend"]
+    F --> F2["Safe read-only probe when available"]
+    E --> G["Rewrite clients to only load mcp-kingdom"]
+    F --> G
+    G --> H["Client sees only 6 front-door tools"]
+
+    H --> I["Runtime: list/search/schema/call arrives at mcp-kingdom"]
+    I --> J["GraphRegistry"]
+    J --> K["Disk + memory cache lookup"]
+    K --> L["Connection resolver"]
+    L --> L1["stdio"]
+    L --> L2["streamable-http"]
+    L --> L3["sse"]
+    L --> L4["Transport fallback logic"]
+    L --> M["Auth resolver"]
+    M --> M1["No auth"]
+    M --> M2["Static headers"]
+    M --> M3["OAuth browser login"]
+    M3 --> M4["Token cache in ~/.mcp-kingdom/auth"]
+    L1 --> N["Selected backend MCP"]
+    L2 --> N
+    L3 --> N
+    L4 --> N
+    M1 --> N
+    M2 --> N
+    M4 --> N
+    N --> O["Tool result shaping"]
+    O --> O1["truncate / fieldPath / maxArrayItems"]
+    O --> P["Return small result to client"]
+
+    Q["Important: call_tool is lazy"] --> R["Only the chosen backend is connected for the call"]
+```
+
+Under the hood:
+
+- discovery is local and dynamic per machine
+- install snapshots the discovered MCPs and rewires clients to one front door
+- policy generation verifies backend tool inventories and keeps auth-gated/failing backends behind the gateway
+- runtime calls go through cache, connection resolution, auth handling, and result shaping
+- `call_tool` is targeted and lazy; it does not fan out to every backend MCP
+
 ## Install
 
 ### Clone and build
@@ -239,6 +298,12 @@ Default: compare today against the previous 7 days:
 npm run claude-stats
 ```
 
+By default this prints a human-readable ASCII graph view. For raw JSON:
+
+```sh
+npm run claude-stats -- --json
+```
+
 Compare a specific day against the previous week:
 
 ```sh
@@ -267,6 +332,12 @@ Default: compare today against the previous 7 days:
 
 ```sh
 npm run opencode-stats
+```
+
+By default this prints a human-readable ASCII graph view. For raw JSON:
+
+```sh
+npm run opencode-stats -- --json
 ```
 
 Compare a specific day:

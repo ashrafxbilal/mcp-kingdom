@@ -18,6 +18,7 @@ import { runInteractiveInstall, shouldUseInteractiveInstall } from './install-ui
 import { AuditLogger } from './logger.js';
 import { authLogin } from './oauth.js';
 import { loadGraphPolicy } from './policy.js';
+import { formatClaudeStatsReport, formatOpenCodeStatsReport } from './stats-format.js';
 import { ensureDir, fileExists, safeJsonStringify } from './utils.js';
 import { runGraphServer } from './server.js';
 
@@ -172,7 +173,12 @@ async function handleClaudeStats(args: string[]): Promise<void> {
     ...(compareDays ? { compareDays: Number.parseInt(compareDays, 10) } : {}),
   });
 
-  process.stdout.write(`${safeJsonStringify(report, 2)}\n`);
+  if (hasFlag(args, '--json')) {
+    process.stdout.write(`${safeJsonStringify(report, 2)}\n`);
+    return;
+  }
+
+  process.stdout.write(formatClaudeStatsReport(report));
 }
 
 async function handleOpenCodeStats(args: string[]): Promise<void> {
@@ -188,7 +194,12 @@ async function handleOpenCodeStats(args: string[]): Promise<void> {
     ...(compareDays ? { compareDays: Number.parseInt(compareDays, 10) } : {}),
   });
 
-  process.stdout.write(`${safeJsonStringify(report, 2)}\n`);
+  if (hasFlag(args, '--json')) {
+    process.stdout.write(`${safeJsonStringify(report, 2)}\n`);
+    return;
+  }
+
+  process.stdout.write(formatOpenCodeStatsReport(report));
 }
 
 async function handleAuth(args: string[]): Promise<void> {
@@ -260,7 +271,7 @@ function parseStringList(value?: string): string[] | undefined {
 }
 
 function printHelp(): void {
-  process.stdout.write(`mcp-kingdom\n\nCommands:\n  serve               Run the MCP server over stdio (default)\n  snapshot            Merge discovered MCP configs and write a backend snapshot file\n  inspect             Print the merged server inventory and duplicate resolution\n  install             Snapshot backend MCPs, generate policy, install helper commands, and rewire Claude/Codex/OpenCode to use only mcp-kingdom\n  rediscover          Re-run backend discovery after adding MCPs and rewire clients back to one front door\n  doctor              Dry-run setup and print what would change before install\n  claude-stats        Summarize Claude usage from ~/.claude/projects with day/week comparisons\n  opencode-stats      Summarize OpenCode usage from the local SQLite database with day/week comparisons\n  auth login          Bootstrap OAuth tokens for an auth-gated backend server\n\nInstall flags:\n  --targets <list>        Limit install to claude,codex,opencode\n  --strict-verify         Fail install if backend verification reports failures\n  --exclude-servers <x>   Exclude backend names from the snapshot\n  --shortcut-bin <dir>    Override where helper commands are installed\n  --skip-shortcuts        Skip installing helper commands\n  --yes                   Skip the interactive preview/confirmation prompt\n  --no-interactive        Force plain non-interactive output\n\nExamples:\n  node dist/cli.js snapshot --output ~/.mcp-kingdom/backends.json\n  node dist/cli.js inspect --tool-counts\n  node dist/cli.js inspect --backend ~/.mcp-kingdom/backends.json --tool-counts\n  node dist/cli.js doctor\n  node dist/cli.js install\n  node dist/cli.js install --yes\n  node dist/cli.js rediscover\n  node dist/cli.js install --targets claude,codex,opencode --strict-verify\n  node dist/cli.js install --exclude-servers blade-mcp,slack\n  node dist/cli.js install --policy ~/.mcp-kingdom/policy.json --verify-timeout-ms ${DEFAULT_VERIFY_TIMEOUT_MS}\n  node dist/cli.js claude-stats --date today --compare-days 7\n  node dist/cli.js claude-stats --root ~/.claude/projects --date 2026-04-27 --timezone Asia/Kolkata\n  node dist/cli.js opencode-stats --date today --compare-days 7\n  node dist/cli.js opencode-stats --project /absolute/project/path --date today\n  node dist/cli.js auth login --server slack\n  MCP_KINGDOM_CONFIG_PATH=~/.mcp-kingdom/backends.json node dist/cli.js\n`);
+  process.stdout.write(`mcp-kingdom\n\nCommands:\n  serve               Run the MCP server over stdio (default)\n  snapshot            Merge discovered MCP configs and write a backend snapshot file\n  inspect             Print the merged server inventory and duplicate resolution\n  install             Snapshot backend MCPs, generate policy, install helper commands, and rewire Claude/Codex/OpenCode to use only mcp-kingdom\n  rediscover          Re-run backend discovery after adding MCPs and rewire clients back to one front door\n  doctor              Dry-run setup and print what would change before install\n  claude-stats        Summarize Claude usage from ~/.claude/projects with day/week comparisons\n  opencode-stats      Summarize OpenCode usage from the local SQLite database with day/week comparisons\n  auth login          Bootstrap OAuth tokens for an auth-gated backend server\n\nInstall flags:\n  --targets <list>        Limit install to claude,codex,opencode\n  --strict-verify         Fail install if backend verification reports failures\n  --exclude-servers <x>   Exclude backend names from the snapshot\n  --shortcut-bin <dir>    Override where helper commands are installed\n  --skip-shortcuts        Skip installing helper commands\n  --yes                   Skip the interactive preview/confirmation prompt\n  --no-interactive        Force plain non-interactive output\n\nStats flags:\n  --json                  Print raw JSON instead of the default graph view\n\nExamples:\n  node dist/cli.js snapshot --output ~/.mcp-kingdom/backends.json\n  node dist/cli.js inspect --tool-counts\n  node dist/cli.js inspect --backend ~/.mcp-kingdom/backends.json --tool-counts\n  node dist/cli.js doctor\n  node dist/cli.js install\n  node dist/cli.js install --yes\n  node dist/cli.js rediscover\n  node dist/cli.js install --targets claude,codex,opencode --strict-verify\n  node dist/cli.js install --exclude-servers blade-mcp,slack\n  node dist/cli.js install --policy ~/.mcp-kingdom/policy.json --verify-timeout-ms ${DEFAULT_VERIFY_TIMEOUT_MS}\n  node dist/cli.js claude-stats --date today --compare-days 7\n  node dist/cli.js claude-stats --json --date today --compare-days 7\n  node dist/cli.js claude-stats --root ~/.claude/projects --date 2026-04-27 --timezone Asia/Kolkata\n  node dist/cli.js opencode-stats --date today --compare-days 7\n  node dist/cli.js opencode-stats --json --project /absolute/project/path --date today\n  node dist/cli.js auth login --server slack\n  MCP_KINGDOM_CONFIG_PATH=~/.mcp-kingdom/backends.json node dist/cli.js\n`);
 }
 
 main()
