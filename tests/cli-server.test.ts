@@ -43,6 +43,12 @@ describe('mcp-kingdom CLI', () => {
 
       const tools = await client.listTools();
       expect(tools.tools.map((tool) => tool.name).sort()).toEqual([...GRAPH_TOOL_NAMES].sort());
+      const alwaysLoaded = new Set(
+        tools.tools
+          .filter((tool) => tool._meta?.['anthropic/alwaysLoad'] === true)
+          .map((tool) => tool.name),
+      );
+      expect(alwaysLoaded).toEqual(new Set(['search_tools', 'get_tool_schema', 'call_tool']));
 
       const servers = await client.callTool({
         name: 'list_servers',

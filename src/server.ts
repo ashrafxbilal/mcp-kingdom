@@ -15,6 +15,12 @@ export interface CreateGraphServerOptions {
   homeDir?: string;
 }
 
+const ALWAYS_LOAD_FRONT_DOOR_TOOLS = new Set([
+  'search_tools',
+  'get_tool_schema',
+  'call_tool',
+]);
+
 export async function createGraphServer(options: CreateGraphServerOptions = {}): Promise<{
   server: McpServer;
   registry: GraphRegistry;
@@ -32,7 +38,7 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
 
   server.registerTool(
     'list_servers',
-    {
+    createToolConfig('list_servers', {
       description: 'List backend MCP servers known to mcp-kingdom and show which config file each came from.',
       inputSchema: z.object({
         includeMetadata: z.boolean().optional().default(false),
@@ -40,7 +46,7 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
         includeToolCounts: z.boolean().optional().default(false),
         refresh: z.boolean().optional().default(false),
       }),
-    },
+    }),
     async ({ includeMetadata, includeDuplicates, includeToolCounts, refresh }) => {
       const inventory = await registry.getServerInventory({ includeToolCounts, refresh });
       const servers = inventory.entries.map(({ server: entry, toolCount, error, connection }) => ({
@@ -96,7 +102,7 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
 
   server.registerTool(
     'search_tools',
-    {
+    createToolConfig('search_tools', {
       description: 'Search lazily across backend MCP tool names and descriptions without loading every tool into the top-level client context.',
       inputSchema: z.object({
         query: z.string().optional().default(''),
@@ -105,7 +111,7 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
         detail: z.enum(['name', 'summary', 'schema']).optional().default('summary'),
         refresh: z.boolean().optional().default(false),
       }),
-    },
+    }),
     async (params) => {
       const result = await registry.searchTools(params);
       const lines = result.matches.map((match, index) => {
@@ -133,14 +139,14 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
 
   server.registerTool(
     'get_tool_schema',
-    {
+    createToolConfig('get_tool_schema', {
       description: 'Fetch the full schema and metadata for one backend MCP tool.',
       inputSchema: z.object({
         server: z.string(),
         tool: z.string(),
         refresh: z.boolean().optional().default(false),
       }),
-    },
+    }),
     async ({ server: serverName, tool, refresh }) => {
       const result = await registry.getTool(serverName, tool, refresh);
       return textResult(
@@ -152,7 +158,7 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
 
   server.registerTool(
     'call_tool',
-    {
+    createToolConfig('call_tool', {
       description: 'Call a backend MCP tool by server name and tool name. mcp-kingdom connects lazily and returns a truncated preview by default to keep context smaller.',
       inputSchema: z.object({
         server: z.string(),
@@ -164,7 +170,7 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
         fieldPath: z.string().optional(),
         maxArrayItems: z.number().int().min(1).max(10_000).optional(),
       }),
-    },
+    }),
     async ({ server: serverName, tool, arguments: rawArguments, maxCharacters, includeStructuredResult, outputMode, fieldPath, maxArrayItems }) => {
       const args = parseObjectArgument(rawArguments);
       const effectiveOutputMode = outputMode ?? (includeStructuredResult ? 'full' : 'content');
@@ -203,7 +209,7 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
 
   server.registerTool(
     'batch_call_tools',
-    {
+    createToolConfig('batch_call_tools', {
       description: 'Call multiple backend MCP tools in one top-level tool invocation to reduce agent round-trips.',
       inputSchema: z.object({
         mode: z.enum(['parallel', 'sequential']).optional().default('sequential'),
@@ -215,7 +221,7 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
           arguments: z.union([z.record(z.any()), z.string()]).optional(),
         })).min(1).max(25),
       }),
-    },
+    }),
     async ({ mode, maxCharactersPerResult, outputMode, steps }) => {
       const normalizedSteps: BatchCallToolStep[] = steps.map((step) => ({
         server: step.server,
@@ -239,13 +245,13 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
 
   server.registerTool(
     'refresh_cache',
-    {
+    createToolConfig('refresh_cache', {
       description: 'Refresh cached tool schemas from one backend server or every backend server.',
       inputSchema: z.object({
         server: z.string().optional(),
         mode: z.enum(['refresh', 'invalidate', 'invalidate-and-refresh']).optional().default('refresh'),
       }),
-    },
+    }),
     async ({ server: serverName, mode }) => {
       if (mode === 'invalidate') {
         const invalidated = await registry.invalidateToolCache(serverName);
@@ -280,6 +286,20 @@ export async function createGraphServer(options: CreateGraphServerOptions = {}):
   });
 
   return { server, registry, loadedConfig };
+}
+
+function createToolConfig<T extends Record<string, unknown>>(toolName: string, config: T): T & { _meta?: Record<string, unknown> } {
+  if (!ALWAYS_LOAD_FRONT_DOOR_TOOLS.has(toolName)) {
+    return config;
+  }
+
+  return {
+    ...config,
+    _meta: {
+      ...(typeof config._meta === 'object' && config._meta !== null ? config._meta as Record<string, unknown> : {}),
+      'anthropic/alwaysLoad': true,
+    },
+  };
 }
 
 export async function runGraphServer(options: CreateGraphServerOptions = {}): Promise<void> {

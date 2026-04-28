@@ -30,6 +30,8 @@ When agents connect to many MCP servers directly, they pay for it twice:
 - `batch_call_tools`
 - `refresh_cache`
 
+For Claude Code `v2.1.121+`, `mcp-kingdom` marks `search_tools`, `get_tool_schema`, and `call_tool` as `anthropic/alwaysLoad` so the core gateway path is immediately available while the less-common front-door tools can still stay deferred.
+
 Behind the scenes it can:
 
 - discover MCP servers from existing Claude, Codex, and OpenCode config files
